@@ -10,6 +10,11 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE TypeOperators          #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE PolyKinds          #-}
+{-# LANGUAGE EmptyDataDecls          #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE UndecidableInstances          #-}
 
 module Database.DynamoDb where
 
@@ -30,6 +35,7 @@ import           Network.AWS.DynamoDB.Types       (AttributeValue,
 import qualified Network.AWS.DynamoDB.Types       as D
 import           Text.Read                        (readMaybe)
 import Data.List.NonEmpty (NonEmpty((:|)))
+import GHC.Exts (Constraint)
 
 -- genTableWithRange ''Test [keyIndex ''DIndex, rangeIndex 'PIndex]
 
@@ -43,9 +49,27 @@ class DynamoTable a r | a -> r where
   putItem = defaultPutItem
 
   createTable :: Proxy a -> ProvisionedThroughput -> D.CreateTable
-  default createTable :: (Generic a, HasDatatypeInfo a, Code a ~ '[ fs ': rest ], DynamoScalar fs ) => Proxy a -> ProvisionedThroughput -> D.CreateTable
-  createTable = defaultCreateTable
+  default createTable :: (TableCreate r a, Generic a, HasDatatypeInfo a, RecordOK r (Code a),
+                          Code a ~ '[ hash ': range ': rest ])
+                           => Proxy a -> ProvisionedThroughput -> D.CreateTable
+  createTable = iCreateTable (Proxy :: Proxy r)
+
   -- deleteItem :: k -> D.DeleteItem
+
+class TableCreate r a where
+  iCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
+                           => Proxy r -> Proxy a -> ProvisionedThroughput -> D.CreateTable
+instance TableCreate NoRange a where
+  iCreateTable _ = defaultCreateTable
+instance TableCreate WithRange a where
+  iCreateTable _ = defaultCreateTableRange
+
+data NoRange
+data WithRange
+
+type family RecordOK r (a :: [[k]]) :: Constraint
+type instance RecordOK NoRange '[ hash ': rest ] = (DynamoScalar hash)
+type instance RecordOK WithRange '[ hash ': range ': rest ] = (DynamoScalar hash, DynamoScalar range)
 
 class DynamoScalar a where
   dType :: Proxy a -> ScalarAttributeType
@@ -108,7 +132,7 @@ gdRangeField _ =
     ADT _ _ cs -> head $ hcollapse $ hliftA getName cs
     _ -> error "Cannot even patternmatch because of type error"
   where
-    getName :: ConstructorInfo xs -> K (T.Text, Proxy fs) xs
+    getName :: ConstructorInfo xs -> K (T.Text, Proxy range) xs
     getName (Record _ fields) =
         K $ (, Proxy) . (!! 1) $ hcollapse $ hliftA (\(FieldInfo name) -> K (T.pack name)) fields
     getName _ = error "Only records are supported."
@@ -138,8 +162,7 @@ defaultPutItem item = D.putItem tblname & D.piItem .~ HMap.fromList attrs
     attrs = gdEncode item
     tblname = tableName (pure item)
 
-defaultCreateTable :: (Generic a, HasDatatypeInfo a, Code a ~ '[ fs ': rest ],
-                       DynamoScalar fs )
+defaultCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK NoRange (Code a), Code a ~ '[ hash ': rest ])
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTable p thr =
     D.createTable (gdConstrName p) (hashKey :| []) thr
@@ -149,10 +172,10 @@ defaultCreateTable p thr =
     hashKey = keySchemaElement firstname D.Hash
     keyDefs = [D.attributeDefinition firstname (dType firstproxy)]
 
-createTableRange ::
-    (Generic a, HasDatatypeInfo a, Code a ~ '[ key ': range ': rest ], DynamoScalar key, DynamoScalar range)
+defaultCreateTableRange ::
+    (Generic a, HasDatatypeInfo a, RecordOK WithRange (Code a), Code a ~ '[ hash ': range ': rest ])
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
-createTableRange p thr =
+defaultCreateTableRange p thr =
     D.createTable (gdConstrName p) (hashKey :| [rangeKey]) thr
       & D.ctAttributeDefinitions .~ keyDefs
   where
@@ -169,5 +192,5 @@ data Test = Test {
 } deriving (Show, GHC.Generic)
 instance Generic Test
 instance HasDatatypeInfo Test
-instance DynamoTable Test () where
-  createTable = createTableRange
+instance DynamoTable Test NoRange where
+  -- createTable = createTableRange
