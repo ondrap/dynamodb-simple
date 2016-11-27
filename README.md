@@ -23,10 +23,10 @@ instance HasDatatypeInfo Test -- Derive generic-sop metadata
 
 -- Choose one of thesee instances - creates table Test
 -- For tables with only a hashkey; first record field is a hashkey
-instance DynamoTable Test NoRange
+instance DynamoTable Test NoRange IsTable
 -- For tables with hashkey and sort key; first 2 fields form primary key;
 -- override default table name
-instance DynamoTable Test WithRange
+instance DynamoTable Test WithRange IsTable
   tableName = "myTableName"
 --
 

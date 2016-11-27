@@ -22,6 +22,7 @@ module Database.DynamoDb (
   , queryKey, queryKeyRange
   , NoRange, WithRange
   , IsTable, IsIndex
+  , gdDecode
 ) where
 
 import           Control.Lens                     ((.~))
@@ -29,7 +30,6 @@ import           Data.Foldable                    (toList)
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
 import           Data.List.NonEmpty               (nonEmpty, NonEmpty((:|)))
-import           Data.Maybe                       (catMaybes)
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
@@ -242,6 +242,18 @@ gdFieldNames _ =
         K $ toNonEmpty $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
+gdFieldNamesNP :: forall a xs. (HasDatatypeInfo a, Code a ~ '[ xs ]) => Proxy a -> NP (K T.Text) xs
+gdFieldNamesNP _ =
+  case datatypeInfo (Proxy :: Proxy a) of
+    ADT _ _ cs ->
+        case hliftA getName cs of
+          start :* Nil -> start
+          _ -> error "Cannot happen - gdFieldNamesNP"
+    _ -> error "Cannot even patternmatch because of type error"
+  where
+    getName :: ConstructorInfo xsd -> NP (K T.Text) xsd
+    getName (Record _ fields) = hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
+    getName _ = error "Only records are supported."
 
 gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))
   => a -> [(T.Text, AttributeValue)]
@@ -258,6 +270,16 @@ gdEncode a =
         K $ hcollapse
           $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K (T.pack name, dEncode val)) ns xs
     gdEncodeRec _ _ = error "Cannot serialize non-record types."
+
+gdDecode ::
+    forall a xs. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
+  => HMap.HashMap T.Text AttributeValue -> Maybe a
+gdDecode attrs =
+    to . SOP . Z <$> hsequence (hcliftA dproxy decodeAttr (gdFieldNamesNP (Proxy :: Proxy a)))
+  where
+    decodeAttr :: DynamoEncodable b => K T.Text b -> Maybe b
+    decodeAttr (K name) = dDecode (HMap.lookup name attrs)
+    dproxy = Proxy :: Proxy DynamoEncodable
 
 defaultPutItem ::
      (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), DynamoTable a r t)
