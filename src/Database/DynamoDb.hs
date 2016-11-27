@@ -62,7 +62,7 @@ class (DynamoCollection a r, Generic a, HasDatatypeInfo a) => DynamoTable a r | 
 
   -- |
   createTable :: Proxy a -> ProvisionedThroughput -> D.CreateTable
-  default createTable :: (TableCreate r a, Generic a, HasDatatypeInfo a, RecordOK r (Code a),
+  default createTable :: (TableCreate a r, Generic a, HasDatatypeInfo a, RecordOK (Code a) r,
                           Code a ~ '[ hash ': range ': rest ])
                            => Proxy a -> ProvisionedThroughput -> D.CreateTable
   createTable = iCreateTable (Proxy :: Proxy r)
@@ -70,54 +70,54 @@ class (DynamoCollection a r, Generic a, HasDatatypeInfo a) => DynamoTable a r | 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
 
-  deleteItem :: (DeleteItem r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
-      => Proxy a -> PrimaryKey r (Code a) -> D.DeleteItem
+  deleteItem :: (DeleteItem a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
+      => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
   deleteItem = iDeleteItem (Proxy :: Proxy r)
 
-type family PrimaryKey r (a :: [[k]]) :: *
-type instance PrimaryKey WithRange ('[ key ': range ': rest ] )  = (key, range)
-type instance PrimaryKey NoRange ('[ key ': rest ])  = key
+type family PrimaryKey (a :: [[k]]) r :: *
+type instance PrimaryKey ('[ key ': range ': rest ] ) WithRange = (key, range)
+type instance PrimaryKey ('[ key ': rest ]) NoRange = key
 
-class DeleteItem r a where
-  iDeleteItem :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
-            => Proxy r -> Proxy a -> PrimaryKey r (Code a) -> D.DeleteItem
-instance DeleteItem NoRange a where
+class DeleteItem a r where
+  iDeleteItem :: (DynamoTable a r, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
+            => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+instance DeleteItem a NoRange where
   iDeleteItem _ p key =
         D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
-instance DeleteItem WithRange a where
+instance DeleteItem a WithRange where
   iDeleteItem _ p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
 
-class TableCreate r a where
-  iCreateTable :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
+class TableCreate a r where
+  iCreateTable :: (DynamoTable a r, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
                            => Proxy r -> Proxy a -> ProvisionedThroughput -> D.CreateTable
-instance TableCreate NoRange a where
+instance TableCreate a NoRange where
   iCreateTable _ = defaultCreateTable
-instance TableCreate WithRange a where
+instance TableCreate a WithRange where
   iCreateTable _ = defaultCreateTableRange
 
-class DynamoCollection a r => TableQuery r a where
-  type QueryRange r (b :: [[k]]) :: *
+class DynamoCollection a r => TableQuery a r where
+  type QueryRange (b :: [[k]]) r :: *
 
   queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
   queryKey = defaultQueryKey
 
   queryKeyRange ::
-        (TableQuery r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
-      => Proxy a -> QueryRange r (Code a) -> D.Query
+        (TableQuery a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
+      => Proxy a -> QueryRange (Code a) r -> D.Query
 
-instance (DynamoCollection a NoRange, Code a ~ '[ xs ]) => TableQuery NoRange a where
-  type QueryRange NoRange ('[ key ': rest ])  = key
+instance (DynamoCollection a NoRange, Code a ~ '[ xs ]) => TableQuery a NoRange where
+  type QueryRange ('[ key ': rest ]) NoRange  = key
   queryKeyRange = defaultQueryKey
 
-instance  (DynamoCollection a WithRange, Code a ~ '[ xs ]) => TableQuery WithRange a where
-  type QueryRange WithRange ('[ key ': range ': rest ] )  = (key, RangeOper range)
+instance  (DynamoCollection a WithRange, Code a ~ '[ xs ]) => TableQuery a WithRange where
+  type QueryRange ('[ key ': range ': rest ] ) WithRange  = (key, RangeOper range)
   queryKeyRange = defaultQueryKeyRange
 
-type family RecordOK r (a :: [[k]]) :: Constraint
-type instance RecordOK NoRange '[ hash ': rest ] = (DynamoScalar hash)
-type instance RecordOK WithRange '[ hash ': range ': rest ] = (DynamoScalar hash, DynamoScalar range)
+type family RecordOK (a :: [[k]]) r :: Constraint
+type instance RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash)
+type instance RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range)
 
 palldynamo :: Proxy (All DynamoEncodable)
 palldynamo = Proxy
@@ -186,7 +186,7 @@ defaultPutItem item = D.putItem tblname & D.piItem .~ HMap.fromList attrs
     attrs = gdEncode item
     tblname = tableName (pure item)
 
-defaultCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK NoRange (Code a), Code a ~ '[ hash ': rest ])
+defaultCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK (Code a) NoRange, Code a ~ '[ hash ': rest ])
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTable p thr =
     D.createTable (gdConstrName p) (hashKey :| []) thr
@@ -197,7 +197,7 @@ defaultCreateTable p thr =
     keyDefs = [D.attributeDefinition firstname (dType firstproxy)]
 
 defaultCreateTableRange ::
-    (Generic a, HasDatatypeInfo a, RecordOK WithRange (Code a), Code a ~ '[ hash ': range ': rest ])
+    (Generic a, HasDatatypeInfo a, RecordOK (Code a) WithRange, Code a ~ '[ hash ': range ': rest ])
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTableRange p thr =
     D.createTable (gdConstrName p) (hashKey :| [rangeKey]) thr
@@ -220,7 +220,7 @@ defaultQueryKey p key =
     (hashname, _) = gdHashField p
 
 defaultQueryKeyRange :: (Code a ~ '[ hash ': range ': rest ], DynamoCollection a r,
-                          RecordOK WithRange (Code a))
+                          RecordOK (Code a) WithRange)
   => Proxy a -> (hash, RangeOper range) -> D.Query
 defaultQueryKeyRange p (key, range) =
   D.query (tableName p) & D.qKeyConditionExpression .~ Just condExpression
