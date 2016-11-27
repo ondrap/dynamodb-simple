@@ -29,6 +29,7 @@ import           Data.Foldable                    (toList)
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
 import           Data.List.NonEmpty               (nonEmpty, NonEmpty((:|)))
+import           Data.Maybe                       (catMaybes)
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
@@ -50,8 +51,9 @@ data NoRange
 -- | Data type for collections with hash key and sort key
 data WithRange
 
-
+-- | Helper type to distinguish index and table collections
 data IsTable
+-- | Helper type to distinguish index and table collections
 data IsIndex
 -- | Basic instance for dynamo collection (table or index)
 -- This instances fixes the tableName and the sort key
