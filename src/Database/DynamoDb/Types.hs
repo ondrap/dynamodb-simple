@@ -8,6 +8,7 @@ module Database.DynamoDb.Types (
   , RangeOper(..)
   , rangeOper
   , rangeData
+  , IsText
 ) where
 
 import           Control.Lens                ((.~), (^.))
@@ -89,19 +90,23 @@ instance DynamoEncodable a => DynamoEncodable [a] where
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
   dDecode Nothing = Nothing
 
-
+-- | Class to limit certain operations
 class IsNotNumber a
 instance IsNotNumber T.Text
 instance IsNotNumber BS.ByteString
 
+-- | Class to limit certain operations to text-like only
+class IsText a
+instance IsText T.Text
+
 data RangeOper a where
-  Equals :: a -> RangeOper a
-  LessThan :: a -> RangeOper a
-  LessThanE :: a -> RangeOper a
-  GreaterThan :: a -> RangeOper a
-  GreaterThanE :: a -> RangeOper a
-  Between :: a -> a -> RangeOper a
-  BeginsWith :: (IsNotNumber a) => a -> RangeOper a
+  RangeEquals :: a -> RangeOper a
+  RangeLessThan :: a -> RangeOper a
+  RangeLessThanE :: a -> RangeOper a
+  RangeGreaterThan :: a -> RangeOper a
+  RangeGreaterThanE :: a -> RangeOper a
+  RangeBetween :: a -> a -> RangeOper a
+  RangeBeginsWith :: (IsNotNumber a) => a -> RangeOper a
 
 rangeKey :: T.Text
 rangeKey = ":rangekey"
@@ -113,19 +118,19 @@ rangeEnd :: T.Text
 rangeEnd = ":rangeEnd"
 
 rangeOper :: RangeOper a -> T.Text -> T.Text
-rangeOper (Equals _) n = "#" <> n <> " = " <> rangeKey
-rangeOper (LessThan _) n = "#" <> n <> " < " <> rangeKey
-rangeOper (LessThanE _) n = "#" <> n <> " <= " <> rangeKey
-rangeOper (GreaterThan _) n = "#" <> n <> " > " <> rangeKey
-rangeOper (GreaterThanE _) n = "#" <> n <> " >= " <> rangeKey
-rangeOper (Between _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND " <> rangeEnd
-rangeOper (BeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
+rangeOper (RangeEquals _) n = "#" <> n <> " = " <> rangeKey
+rangeOper (RangeLessThan _) n = "#" <> n <> " < " <> rangeKey
+rangeOper (RangeLessThanE _) n = "#" <> n <> " <= " <> rangeKey
+rangeOper (RangeGreaterThan _) n = "#" <> n <> " > " <> rangeKey
+rangeOper (RangeGreaterThanE _) n = "#" <> n <> " >= " <> rangeKey
+rangeOper (RangeBetween _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND " <> rangeEnd
+rangeOper (RangeBeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
 
 rangeData :: DynamoScalar a => RangeOper a -> [(T.Text, AttributeValue)]
-rangeData (Equals a) = [(rangeKey, dEncode a)]
-rangeData (LessThan a) = [(rangeKey, dEncode a)]
-rangeData (LessThanE a) = [(rangeKey, dEncode a)]
-rangeData (GreaterThan a) = [(rangeKey, dEncode a)]
-rangeData (GreaterThanE a) = [(rangeKey, dEncode a)]
-rangeData (Between s e) = [(rangeStart, dEncode s), (rangeEnd, dEncode e)]
-rangeData (BeginsWith a) = [(rangeKey, dEncode a)]
+rangeData (RangeEquals a) = [(rangeKey, dEncode a)]
+rangeData (RangeLessThan a) = [(rangeKey, dEncode a)]
+rangeData (RangeLessThanE a) = [(rangeKey, dEncode a)]
+rangeData (RangeGreaterThan a) = [(rangeKey, dEncode a)]
+rangeData (RangeGreaterThanE a) = [(rangeKey, dEncode a)]
+rangeData (RangeBetween s e) = [(rangeStart, dEncode s), (rangeEnd, dEncode e)]
+rangeData (RangeBeginsWith a) = [(rangeKey, dEncode a)]
