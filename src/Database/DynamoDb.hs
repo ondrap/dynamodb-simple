@@ -21,19 +21,19 @@ module Database.DynamoDb where
 import           Control.Lens                     ((.~))
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
+import           Data.List.NonEmpty               (NonEmpty((:|)))
+import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
 import qualified GHC.Generics                     as GHC
+import           GHC.Exts                         (Constraint)
 import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteItem  as D
-import Data.Monoid ((<>))
 import qualified Network.AWS.DynamoDB.Query  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import           Network.AWS.DynamoDB.Types       (AttributeValue,
                                                    ProvisionedThroughput, keySchemaElement)
 import qualified Network.AWS.DynamoDB.Types       as D
-import Data.List.NonEmpty (NonEmpty((:|)))
-import GHC.Exts (Constraint)
 
 import Database.DynamoDb.Types
 
@@ -61,9 +61,24 @@ class (Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
       => Proxy a -> QueryRange r (Code a) -> D.Query
   queryKeyRange = iQueryKeyRange (Proxy :: Proxy r)
 
-type family QueryRange r (a :: [[k]]) :: *
-type instance QueryRange WithRange ('[ key ': range ': rest ] )  = (key, RangeOper range)
-type instance QueryRange NoRange ('[ key ': rest ])  = key
+  deleteItem :: (DeleteItem r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
+      => Proxy a -> PrimaryKey r (Code a) -> D.DeleteItem
+  deleteItem = iDeleteItem (Proxy :: Proxy r)
+
+type family PrimaryKey r (a :: [[k]]) :: *
+type instance PrimaryKey WithRange ('[ key ': range ': rest ] )  = (key, range)
+type instance PrimaryKey NoRange ('[ key ': rest ])  = key
+
+class DeleteItem r a where
+  iDeleteItem :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
+            => Proxy r -> Proxy a -> PrimaryKey r (Code a) -> D.DeleteItem
+instance DeleteItem NoRange a where
+  iDeleteItem _ p key =
+        D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
+instance DeleteItem WithRange a where
+  iDeleteItem _ p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
+    where
+      plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
 
 class TableCreate r a where
   iCreateTable :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
@@ -74,11 +89,14 @@ instance TableCreate WithRange a where
   iCreateTable _ = defaultCreateTableRange
 
 class TableQuery r a where
+  type QueryRange r (b :: [[k]]) :: *
   iQueryKeyRange :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
     => Proxy r -> Proxy a -> QueryRange r (Code a) -> D.Query
 instance TableQuery NoRange a where
+  type QueryRange NoRange ('[ key ': rest ])  = key
   iQueryKeyRange _ = defaultQueryKey
 instance TableQuery WithRange a where
+  type QueryRange WithRange ('[ key ': range ': rest ] )  = (key, RangeOper range)
   iQueryKeyRange _ = defaultQueryKeyRange
 
 data NoRange
@@ -188,7 +206,7 @@ defaultQueryKey p key =
   where
     (hashname, _) = gdHashField p
 
-defaultQueryKeyRange :: (Code a ~ '[ hash ': range ': rest ], DynamoTable a k,
+defaultQueryKeyRange :: (Code a ~ '[ hash ': range ': rest ], DynamoTable a r,
                           RecordOK WithRange (Code a))
   => Proxy a -> (hash, RangeOper range) -> D.Query
 defaultQueryKeyRange p (key, range) =
@@ -209,4 +227,4 @@ data Test = Test {
 } deriving (Show, GHC.Generic)
 instance Generic Test
 instance HasDatatypeInfo Test
-instance DynamoTable Test NoRange where
+instance DynamoTable Test WithRange where

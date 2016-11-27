@@ -1,7 +1,13 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Database.DynamoDb.Types where
+module Database.DynamoDb.Types (
+    DynamoEncodable(..)
+  , DynamoScalar(..)
+  , RangeOper(..)
+  , rangeOper
+  , rangeData
+) where
 
 import           Control.Lens                ((.~), (^.))
 import qualified Data.ByteString             as BS
