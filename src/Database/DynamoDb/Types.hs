@@ -1,6 +1,6 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
 
 module Database.DynamoDb.Types (
     DynamoEncodable(..)
@@ -14,11 +14,11 @@ import           Control.Lens                ((.~), (^.))
 import qualified Data.ByteString             as BS
 import           Data.Double.Conversion.Text (toShortest)
 import           Data.Function               ((&))
+import           Data.HashMap.Strict         (HashMap)
 import           Data.Monoid                 ((<>))
 import           Data.Proxy
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
-import Data.HashMap.Strict (HashMap)
 import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
                                               attributeValue)
