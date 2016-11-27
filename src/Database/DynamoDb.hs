@@ -18,28 +18,28 @@
 
 module Database.DynamoDb where
 
-import           Control.Lens                     ((.~), (^.))
-import           Data.Double.Conversion.Text      (toShortest)
+import           Control.Lens                     ((.~))
 import           Data.Function                    ((&))
-import           Data.HashMap.Strict              (HashMap)
 import qualified Data.HashMap.Strict              as HMap
 import qualified Data.Text                        as T
 import           Generics.SOP
 import qualified GHC.Generics                     as GHC
 import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteItem  as D
+import Data.Monoid ((<>))
+import qualified Network.AWS.DynamoDB.Query  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import           Network.AWS.DynamoDB.Types       (AttributeValue,
-                                                   ScalarAttributeType,
-                                                   attributeValue, ProvisionedThroughput, keySchemaElement)
+                                                   ProvisionedThroughput, keySchemaElement)
 import qualified Network.AWS.DynamoDB.Types       as D
-import           Text.Read                        (readMaybe)
 import Data.List.NonEmpty (NonEmpty((:|)))
 import GHC.Exts (Constraint)
 
+import Database.DynamoDb.Types
+
 -- genTableWithRange ''Test [keyIndex ''DIndex, rangeIndex 'PIndex]
 
-class DynamoTable a r | a -> r where
+class (Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
   tableName :: Proxy a -> T.Text -- TODO: default podle typu
   default tableName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
   tableName = gdConstrName
@@ -54,15 +54,32 @@ class DynamoTable a r | a -> r where
                            => Proxy a -> ProvisionedThroughput -> D.CreateTable
   createTable = iCreateTable (Proxy :: Proxy r)
 
-  -- deleteItem :: k -> D.DeleteItem
+  queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
+  queryKey = defaultQueryKey
+
+  queryKeyRange :: (TableQuery r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
+      => Proxy a -> QueryRange r (Code a) -> D.Query
+  queryKeyRange = iQueryKeyRange (Proxy :: Proxy r)
+
+type family QueryRange r (a :: [[k]]) :: *
+type instance QueryRange WithRange ('[ key ': range ': rest ] )  = (key, RangeOper range)
+type instance QueryRange NoRange ('[ key ': rest ])  = key
 
 class TableCreate r a where
-  iCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
+  iCreateTable :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
                            => Proxy r -> Proxy a -> ProvisionedThroughput -> D.CreateTable
 instance TableCreate NoRange a where
   iCreateTable _ = defaultCreateTable
 instance TableCreate WithRange a where
   iCreateTable _ = defaultCreateTableRange
+
+class TableQuery r a where
+  iQueryKeyRange :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
+    => Proxy r -> Proxy a -> QueryRange r (Code a) -> D.Query
+instance TableQuery NoRange a where
+  iQueryKeyRange _ = defaultQueryKey
+instance TableQuery WithRange a where
+  iQueryKeyRange _ = defaultQueryKeyRange
 
 data NoRange
 data WithRange
@@ -70,30 +87,6 @@ data WithRange
 type family RecordOK r (a :: [[k]]) :: Constraint
 type instance RecordOK NoRange '[ hash ': rest ] = (DynamoScalar hash)
 type instance RecordOK WithRange '[ hash ': range ': rest ] = (DynamoScalar hash, DynamoScalar range)
-
-class DynamoScalar a where
-  dType :: Proxy a -> ScalarAttributeType
-instance DynamoScalar Int where
-  dType _ = D.N
-instance DynamoScalar T.Text where
-  dType _ = D.S
-
-class DynamoEncodable a where
-  dEncode :: a -> AttributeValue
-  dDecode :: AttributeValue -> Maybe a
-
-instance DynamoEncodable Int where
-  dEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
-  dDecode attr = attr ^. D.avN >>= readMaybe . T.unpack
-instance DynamoEncodable Double where
-  dEncode num = attributeValue & D.avN .~ (Just $ toShortest num)
-  dDecode attr = attr ^. D.avN >>= readMaybe . T.unpack
-instance DynamoEncodable Bool where
-  dEncode b = attributeValue & D.avBOOL .~ Just b
-  dDecode attr = attr ^. D.avBOOL
-instance DynamoEncodable T.Text where
-  dEncode t = attributeValue & D.avS .~ Just t
-  dDecode attr = attr ^. D.avS
 
 palldynamo :: Proxy (All DynamoEncodable)
 palldynamo = Proxy
@@ -186,6 +179,30 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType hashproxy),
                D.attributeDefinition rangename (dType rangeproxy)]
 
+defaultQueryKey :: (Code a ~ '[ key ': rest ], DynamoTable a k, DynamoScalar key)
+  => Proxy a -> key -> D.Query
+defaultQueryKey p key =
+  D.query (tableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
+                        & D.qExpressionAttributeNames .~ HMap.singleton "K" hashname
+                        & D.qExpressionAttributeValues .~ HMap.singleton "key" (dEncode key)
+  where
+    (hashname, _) = gdHashField p
+
+defaultQueryKeyRange :: (Code a ~ '[ hash ': range ': rest ], DynamoTable a k,
+                          RecordOK WithRange (Code a))
+  => Proxy a -> (hash, RangeOper range) -> D.Query
+defaultQueryKeyRange p (key, range) =
+  D.query (tableName p) & D.qKeyConditionExpression .~ Just condExpression
+                        & D.qExpressionAttributeNames .~ attrnames
+                        & D.qExpressionAttributeValues .~ attrvals
+  where
+    rangeSubst = "R"
+    condExpression = "#K = :key AND <> " <> rangeOper range rangeSubst
+    attrnames = HMap.fromList [("K", hashname), (rangeSubst, rangename)]
+    attrvals = HMap.fromList $ [("key", dEncode key)] ++ rangeData range
+    (hashname, _) = gdHashField p
+    (rangename, _) = gdRangeField p
+
 data Test = Test {
     prvni :: Int
   , druhy :: T.Text
@@ -193,4 +210,3 @@ data Test = Test {
 instance Generic Test
 instance HasDatatypeInfo Test
 instance DynamoTable Test NoRange where
-  -- createTable = createTableRange
