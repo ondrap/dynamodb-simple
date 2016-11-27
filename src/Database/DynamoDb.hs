@@ -29,6 +29,7 @@ import qualified GHC.Generics                     as GHC
 import           GHC.Exts                         (Constraint)
 import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteItem  as D
+import qualified Network.AWS.DynamoDB.DeleteTable  as D
 import qualified Network.AWS.DynamoDB.Query  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import           Network.AWS.DynamoDB.Types       (AttributeValue,
@@ -53,6 +54,9 @@ class (Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
                           Code a ~ '[ hash ': range ': rest ])
                            => Proxy a -> ProvisionedThroughput -> D.CreateTable
   createTable = iCreateTable (Proxy :: Proxy r)
+
+  deleteTable :: Proxy a -> D.DeleteTable
+  deleteTable p = D.deleteTable (tableName p)
 
   queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
   queryKey = defaultQueryKey
