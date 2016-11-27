@@ -51,7 +51,7 @@ instance IsNotNumber T.Text
 instance IsNotNumber BS.ByteString
 
 data RangeOper a where
-  Equal :: a -> RangeOper a
+  Equals :: a -> RangeOper a
   LessThan :: a -> RangeOper a
   LessThanE :: a -> RangeOper a
   GreaterThan :: a -> RangeOper a
@@ -69,7 +69,7 @@ rangeEnd :: T.Text
 rangeEnd = ":rangeEnd"
 
 rangeOper :: RangeOper a -> T.Text -> T.Text
-rangeOper (Equal _) n = "#" <> n <> " = " <> rangeKey
+rangeOper (Equals _) n = "#" <> n <> " = " <> rangeKey
 rangeOper (LessThan _) n = "#" <> n <> " < " <> rangeKey
 rangeOper (LessThanE _) n = "#" <> n <> " <= " <> rangeKey
 rangeOper (GreaterThan _) n = "#" <> n <> " > " <> rangeKey
@@ -78,7 +78,7 @@ rangeOper (Between _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND " <> 
 rangeOper (BeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
 
 rangeData :: DynamoEncodable a => RangeOper a -> [(T.Text, AttributeValue)]
-rangeData (Equal a) = [(rangeKey, dEncode a)]
+rangeData (Equals a) = [(rangeKey, dEncode a)]
 rangeData (LessThan a) = [(rangeKey, dEncode a)]
 rangeData (LessThanE a) = [(rangeKey, dEncode a)]
 rangeData (GreaterThan a) = [(rangeKey, dEncode a)]

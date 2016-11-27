@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds              #-}
-{-# LANGUAGE DeriveGeneric          #-}
 {-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
@@ -16,7 +15,11 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE UndecidableInstances          #-}
 
-module Database.DynamoDb where
+module Database.DynamoDb (
+    DynamoCollection(..)
+  , DynamoTable(..)
+  , NoRange, WithRange
+) where
 
 import           Control.Lens                     ((.~))
 import           Data.Function                    ((&))
@@ -25,7 +28,6 @@ import           Data.List.NonEmpty               (NonEmpty((:|)))
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
-import qualified GHC.Generics                     as GHC
 import           GHC.Exts                         (Constraint)
 import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteItem  as D
@@ -38,17 +40,27 @@ import qualified Network.AWS.DynamoDB.Types       as D
 
 import Database.DynamoDb.Types
 
--- genTableWithRange ''Test [keyIndex ''DIndex, rangeIndex 'PIndex]
+-- | Data type for collections with only hash key
+data NoRange
+-- | Data type for collections with hash key and sort key
+data WithRange
 
-class (Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
-  tableName :: Proxy a -> T.Text -- TODO: default podle typu
+-- | Basic instance for dynamo collection (table or index)
+-- This instances fixes the tableName and the sort key
+class (Generic a, HasDatatypeInfo a) => DynamoCollection a r | a -> r where
+  -- | Dynamo table/index name; default is the constructor name
+  tableName :: Proxy a -> T.Text
   default tableName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
   tableName = gdConstrName
 
+-- | Descritpion of dynamo table
+class (DynamoCollection a r, Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
+  -- | Serialize data, put it into the database
   putItem :: a -> D.PutItem
   default putItem :: (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a)) => a -> D.PutItem
   putItem = defaultPutItem
 
+  -- |
   createTable :: Proxy a -> ProvisionedThroughput -> D.CreateTable
   default createTable :: (TableCreate r a, Generic a, HasDatatypeInfo a, RecordOK r (Code a),
                           Code a ~ '[ hash ': range ': rest ])
@@ -57,13 +69,6 @@ class (Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
-
-  queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
-  queryKey = defaultQueryKey
-
-  queryKeyRange :: (TableQuery r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
-      => Proxy a -> QueryRange r (Code a) -> D.Query
-  queryKeyRange = iQueryKeyRange (Proxy :: Proxy r)
 
   deleteItem :: (DeleteItem r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
       => Proxy a -> PrimaryKey r (Code a) -> D.DeleteItem
@@ -92,19 +97,23 @@ instance TableCreate NoRange a where
 instance TableCreate WithRange a where
   iCreateTable _ = defaultCreateTableRange
 
-class TableQuery r a where
+class DynamoCollection a r => TableQuery r a where
   type QueryRange r (b :: [[k]]) :: *
-  iQueryKeyRange :: (DynamoTable a r, RecordOK r (Code a), Code a ~ '[ hash ': range ': xss ])
-    => Proxy r -> Proxy a -> QueryRange r (Code a) -> D.Query
-instance TableQuery NoRange a where
-  type QueryRange NoRange ('[ key ': rest ])  = key
-  iQueryKeyRange _ = defaultQueryKey
-instance TableQuery WithRange a where
-  type QueryRange WithRange ('[ key ': range ': rest ] )  = (key, RangeOper range)
-  iQueryKeyRange _ = defaultQueryKeyRange
 
-data NoRange
-data WithRange
+  queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
+  queryKey = defaultQueryKey
+
+  queryKeyRange ::
+        (TableQuery r a, Code a ~ '[ key ': hash ': rest ], RecordOK r (Code a))
+      => Proxy a -> QueryRange r (Code a) -> D.Query
+
+instance (DynamoCollection a NoRange, Code a ~ '[ xs ]) => TableQuery NoRange a where
+  type QueryRange NoRange ('[ key ': rest ])  = key
+  queryKeyRange = defaultQueryKey
+
+instance  (DynamoCollection a WithRange, Code a ~ '[ xs ]) => TableQuery WithRange a where
+  type QueryRange WithRange ('[ key ': range ': rest ] )  = (key, RangeOper range)
+  queryKeyRange = defaultQueryKeyRange
 
 type family RecordOK r (a :: [[k]]) :: Constraint
 type instance RecordOK NoRange '[ hash ': rest ] = (DynamoScalar hash)
@@ -201,7 +210,7 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType hashproxy),
                D.attributeDefinition rangename (dType rangeproxy)]
 
-defaultQueryKey :: (Code a ~ '[ key ': rest ], DynamoTable a k, DynamoScalar key)
+defaultQueryKey :: (Code a ~ '[ key ': rest ], DynamoCollection a r, DynamoScalar key)
   => Proxy a -> key -> D.Query
 defaultQueryKey p key =
   D.query (tableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
@@ -210,7 +219,7 @@ defaultQueryKey p key =
   where
     (hashname, _) = gdHashField p
 
-defaultQueryKeyRange :: (Code a ~ '[ hash ': range ': rest ], DynamoTable a r,
+defaultQueryKeyRange :: (Code a ~ '[ hash ': range ': rest ], DynamoCollection a r,
                           RecordOK WithRange (Code a))
   => Proxy a -> (hash, RangeOper range) -> D.Query
 defaultQueryKeyRange p (key, range) =
@@ -224,11 +233,3 @@ defaultQueryKeyRange p (key, range) =
     attrvals = HMap.fromList $ [("key", dEncode key)] ++ rangeData range
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
-
-data Test = Test {
-    prvni :: Int
-  , druhy :: T.Text
-} deriving (Show, GHC.Generic)
-instance Generic Test
-instance HasDatatypeInfo Test
-instance DynamoTable Test WithRange where
