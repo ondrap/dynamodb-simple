@@ -18,13 +18,16 @@
 module Database.DynamoDb (
     DynamoCollection(..)
   , DynamoTable(..)
+  , DynamoIndex(..)
+  , queryKey, queryKeyRange
   , NoRange, WithRange
 ) where
 
 import           Control.Lens                     ((.~))
+import           Data.Foldable                    (toList)
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
-import           Data.List.NonEmpty               (NonEmpty((:|)))
+import           Data.List.NonEmpty               (nonEmpty, NonEmpty((:|)))
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
@@ -48,11 +51,23 @@ data WithRange
 
 -- | Basic instance for dynamo collection (table or index)
 -- This instances fixes the tableName and the sort key
-class (Generic a, HasDatatypeInfo a) => DynamoCollection a r | a -> r where
+class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r) => DynamoCollection a r | a -> r where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
   default tableName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
   tableName = gdConstrName
+
+  primaryFields :: (Code a ~ '[ xs ': rest ]) => Proxy a -> NonEmpty T.Text
+  primaryFields _ = key :| take (primaryFieldCount (Proxy :: Proxy r) - 1) rest
+    where
+      (key :| rest) = gdFieldNames (Proxy :: Proxy a)
+
+class PrimaryFieldCount r where
+  primaryFieldCount :: Proxy r -> Int
+instance PrimaryFieldCount NoRange where
+  primaryFieldCount _ = 1
+instance PrimaryFieldCount WithRange where
+  primaryFieldCount _ = 2
 
 -- | Descritpion of dynamo table
 class (DynamoCollection a r, Generic a, HasDatatypeInfo a) => DynamoTable a r | a -> r where
@@ -75,10 +90,7 @@ class (DynamoCollection a r, Generic a, HasDatatypeInfo a) => DynamoTable a r | 
       => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
   deleteItem = iDeleteItem (Proxy :: Proxy r)
 
-type family PrimaryKey (a :: [[k]]) r :: *
-type instance PrimaryKey ('[ key ': range ': rest ] ) WithRange = (key, range)
-type instance PrimaryKey ('[ key ': rest ]) NoRange = key
-
+-- | Dispatch class for NoRange/WithRange deleteItem
 class DeleteItem a r where
   iDeleteItem :: (DynamoTable a r, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
             => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
@@ -90,6 +102,7 @@ instance DeleteItem a WithRange where
     where
       plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
 
+-- | Dispatch class for NoRange/WithRange createTable
 class TableCreate a r where
   iCreateTable :: (DynamoTable a r, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
                            => Proxy r -> Proxy a -> ProvisionedThroughput -> D.CreateTable
@@ -98,12 +111,14 @@ instance TableCreate a NoRange where
 instance TableCreate a WithRange where
   iCreateTable _ = defaultCreateTableRange
 
+-- | Instance for tables that can be queried
 class DynamoCollection a r => TableQuery a r where
   type QueryRange (b :: [[k]]) r :: *
-
+  -- | Create a query only by hash key
   queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
   queryKey = defaultQueryKey
-
+  -- | Create a query using both hash key and operation on range key
+  -- On tables without range key, this degrades to queryKey
   queryKeyRange ::
         (TableQuery a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
       => Proxy a -> QueryRange (Code a) r -> D.Query
@@ -116,14 +131,23 @@ instance  (DynamoCollection a WithRange, Code a ~ '[ xs ]) => TableQuery a WithR
   type QueryRange ('[ key ': range ': rest ] ) WithRange  = (key, RangeOper range)
   queryKeyRange = defaultQueryKeyRange
 
+-- | Parameter type for queryKeyRange
+type family PrimaryKey (a :: [[k]]) r :: *
+type instance PrimaryKey ('[ key ': range ': rest ] ) WithRange = (key, range)
+type instance PrimaryKey ('[ key ': rest ]) NoRange = key
+
+-- | Constraint to check that hash/sort key are scalar
 type family RecordOK (a :: [[k]]) r :: Constraint
 type instance RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash)
 type instance RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range)
 
-
-class DynamoIndex a t r | a -> t, a -> r where
-  createIndex :: Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
-  -- createIndex = defaultCreateIndex
+-- | Class representing a Global Secondary Index
+class DynamoIndex a parent r | a -> parent, a -> r where
+  createIndex ::
+      (DynamoCollection a r, DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
+        Code a ~ '[hash ': rest ])
+         => Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
+  createIndex = defaultCreateIndex
 
 palldynamo :: Proxy (All DynamoEncodable)
 palldynamo = Proxy
@@ -175,6 +199,21 @@ gdRangeField _ =
     getName :: ConstructorInfo xs -> K (T.Text, Proxy range) xs
     getName (Record _ fields) =
         K $ (, Proxy) . (!! 1) $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
+    getName _ = error "Only records are supported."
+
+gdFieldNames :: forall a xss rest. (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ': rest ]) => Proxy a -> NonEmpty T.Text
+gdFieldNames _ =
+  case datatypeInfo (Proxy :: Proxy a) of
+    ADT _ _ cs -> head $ hcollapse $ hliftA getName cs
+    _ -> error "Cannot even patternmatch because of type error"
+  where
+    toNonEmpty :: [T.Text] -> NonEmpty T.Text
+    toNonEmpty [] = error "Should not happen - checked at type level"
+    toNonEmpty (x:xs) = x :| xs
+
+    getName :: ConstructorInfo xs -> K (NonEmpty T.Text) xs
+    getName (Record _ fields) =
+        K $ toNonEmpty $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
 
@@ -246,15 +285,22 @@ defaultQueryKeyRange p (key, range) =
     rangeSubst = "R"
     condExpression = "#K = :key AND <> " <> rangeOper range rangeSubst
     attrnames = HMap.fromList [("K", hashname), (rangeSubst, rangename)]
-    attrvals = HMap.fromList $ [("key", dEncode key)] ++ rangeData range
+    attrvals = HMap.fromList $ rangeData range ++ [("key", dEncode key)]
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
 
--- defaultCeateIndex ::
---   (DynamoIndex a t r) =>
---   Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
--- defaultCreateIndex p thr =
---     globalSecondaryIndex (tableName p) schema proj thr
---   where
---     schema =
---     proj =
+defaultCreateIndex :: forall a r parent r2 hash rest xs rest2.
+  (DynamoCollection a r, DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
+    Code a ~ '[hash ': rest ]) =>
+  Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
+defaultCreateIndex p thr =
+    globalSecondaryIndex (tableName p) keyschema proj thr
+  where
+    (hashname :| rest) = primaryFields (Proxy :: Proxy a)
+    keyschema = keySchemaElement hashname D.Hash :| map (`keySchemaElement` D.Range) rest
+    proj | Just lst <- nonEmpty attrlist =
+                    D.projection & D.pProjectionType .~ Just D.Include
+                                 & D.pNonKeyAttributes .~ Just lst
+         | otherwise = D.projection & D.pProjectionType .~ Just D.KeysOnly
+    parentKey = primaryFields (Proxy :: Proxy parent)
+    attrlist = filter (`notElem` (toList parentKey ++ [hashname])) $ toList $ gdFieldNames (Proxy :: Proxy a)
