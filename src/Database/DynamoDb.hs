@@ -35,7 +35,8 @@ import qualified Network.AWS.DynamoDB.DeleteTable  as D
 import qualified Network.AWS.DynamoDB.Query  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import           Network.AWS.DynamoDB.Types       (AttributeValue,
-                                                   ProvisionedThroughput, keySchemaElement)
+                                                   ProvisionedThroughput, keySchemaElement,
+                                                   globalSecondaryIndex)
 import qualified Network.AWS.DynamoDB.Types       as D
 
 import Database.DynamoDb.Types
@@ -119,6 +120,11 @@ type family RecordOK (a :: [[k]]) r :: Constraint
 type instance RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash)
 type instance RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range)
 
+
+class DynamoIndex a t r | a -> t, a -> r where
+  createIndex :: Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
+  -- createIndex = defaultCreateIndex
+
 palldynamo :: Proxy (All DynamoEncodable)
 palldynamo = Proxy
 
@@ -137,6 +143,16 @@ gdConstrName _ =
     getName (Constructor name) = K (T.pack name)
     getName (Infix name _ _) = K (T.pack name)
 
+
+-- | Function that translates haskell field names to database field names
+translateFieldName :: String -> T.Text
+translateFieldName = T.pack . translate
+  where
+    translate ('_':rest) = rest
+    translate name
+      | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
+      | otherwise = name
+
 gdHashField :: forall a hash rest. (Generic a, HasDatatypeInfo a, Code a ~ '[ hash ': rest ] )
   => Proxy a -> (T.Text, Proxy hash)
 gdHashField _ =
@@ -146,7 +162,7 @@ gdHashField _ =
   where
     getName :: ConstructorInfo xs -> K (T.Text, Proxy hash) xs
     getName (Record _ fields) =
-        K $ (, Proxy) . head $ hcollapse $ hliftA (\(FieldInfo name) -> K (T.pack name)) fields
+        K $ (, Proxy) . head $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
 gdRangeField :: forall a hash range rest. (Generic a, HasDatatypeInfo a, Code a ~ '[ hash ': range ': rest ] )
@@ -158,7 +174,7 @@ gdRangeField _ =
   where
     getName :: ConstructorInfo xs -> K (T.Text, Proxy range) xs
     getName (Record _ fields) =
-        K $ (, Proxy) . (!! 1) $ hcollapse $ hliftA (\(FieldInfo name) -> K (T.pack name)) fields
+        K $ (, Proxy) . (!! 1) $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
 
@@ -233,3 +249,12 @@ defaultQueryKeyRange p (key, range) =
     attrvals = HMap.fromList $ [("key", dEncode key)] ++ rangeData range
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
+
+-- defaultCeateIndex ::
+--   (DynamoIndex a t r) =>
+--   Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
+-- defaultCreateIndex p thr =
+--     globalSecondaryIndex (tableName p) schema proj thr
+--   where
+--     schema =
+--     proj =
