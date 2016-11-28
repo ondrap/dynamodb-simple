@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TupleSections         #-}
 
 module Database.DynamoDb.Filter (
@@ -14,36 +15,42 @@ module Database.DynamoDb.Filter (
     , size
     , Column(Column)
     , TypColumn
-    , ColName(..)
     , dumpCondition
     , InCollection
+    , ColumnInfo(..)
 ) where
 
 import           Control.Monad.Supply       (evalSupply, supply)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
 import           Data.Monoid                ((<>))
+import           Data.Proxy
 import qualified Data.Text                  as T
 import qualified Network.AWS.DynamoDB.Types as D
 
 import           Database.DynamoDb.Types
 
--- | Support for Filter expressins
-newtype ColName = ColName T.Text
-  deriving (Show)
 data TypColumn
 data TypSize
+-- | Representation of a column for filter queries
+-- typ - datatype of column (Int, Text..)
+-- coltype - TypColumn or TypSize (result of size(column))
+-- col - instance of ColumnInfo, uniquely identify a column
 data Column typ coltype col where
-    Column :: ColName -> Column typ TypColumn col
-    Size :: ColName -> Column Int TypSize col
-
-type NameGen = T.Text -> (T.Text, ColName)
-nameGen :: Column typ ctyp col -> NameGen
-nameGen (Column name) subst = ("#" <> subst, name)
-nameGen (Size name) subst = ("size(#" <> subst <> ")", name)
+    Column :: Column typ TypColumn col
+    Size :: Column Int TypSize col
 
 -- | Signifies that the column is present in the table/index
-class InCollection col tbl
+class ColumnInfo col => InCollection col tbl
+
+-- | Class to get a column name from a Type specifying a column
+class ColumnInfo a where
+  columnName :: Proxy a -> T.Text
+
+type NameGen = T.Text -> (T.Text, T.Text)
+nameGen :: forall typ ctyp col. ColumnInfo col => Column typ ctyp col -> NameGen
+nameGen Column subst = ("#" <> subst, columnName (Proxy :: Proxy col))
+nameGen Size subst = ("size(#" <> subst <> ")", columnName (Proxy :: Proxy col))
 
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
@@ -75,43 +82,43 @@ dumpCondition fcondition = evalSupply (go fcondition) names
       return ("NOT (" <> t <> ")", a, v)
     go (Comparison name oper val) = do
       ident <- supply
-      let (subst, ColName colname) = name ident
+      let (subst, colname) = name ident
           expr = subst <> " " <> oper <> " :" <> ident
       return (expr, HMap.singleton ident colname, HMap.singleton ident val)
     go (Between name v1 v2) = do
       idname <- supply
       idstart <- supply
       idstop <- supply
-      let (subst, ColName colname) = name idname
+      let (subst, colname) = name idname
           expr = subst <> " BETWEEN :" <> idstart <> " AND :" <> idstop
           vals = HMap.fromList [(idstart, v1), (idstop, v2)]
       return (expr, HMap.singleton idname colname, vals)
 
     go (In name lst) = do
         idname <- supply
-        let (subst, ColName colname) = name idname
+        let (subst, colname) = name idname
         vlist <- mapM (\val -> (,val) <$> supply) lst
         let expr = T.intercalate "," $ map ((":" <>) . fst) vlist
         return (subst <> " IN (" <> expr <> ")", HMap.singleton idname colname, HMap.fromList vlist)
 
     go (AttrExists name) = do
       ident <- supply
-      let (subst, ColName colname) = name ident
+      let (subst, colname) = name ident
           expr = "attribute_exists(" <> subst <> ")"
       return (expr, HMap.singleton ident colname, HMap.empty)
     go (AttrMissing name) = do
       ident <- supply
-      let (subst, ColName colname) = name ident
+      let (subst, colname) = name ident
           expr = "attribute_not_exists(" <> subst <> ")"
       return (expr, HMap.singleton ident colname, HMap.empty)
     go (BeginsWith name val) = do
       ident <- supply
-      let (subst, ColName colname) = name ident
+      let (subst, colname) = name ident
           expr = "begins_with(" <> subst <> ", :" <> ident <> ")"
       return (expr, HMap.singleton ident colname, HMap.singleton ident val)
     go (Contains name val) = do
       ident <- supply
-      let (subst, ColName colname) = name ident
+      let (subst, colname) = name ident
           expr = "contains(" <> subst <> ", :" <> ident <> ")"
       return (expr, HMap.singleton ident colname, HMap.singleton ident val)
 
@@ -121,20 +128,20 @@ between col a b = Between (nameGen col) (dEncode a) (dEncode b)
 valIn :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dEncode lst)
 
-attrExists :: Column tbl typ TypColumn -> FilterCondition tbl
+attrExists :: InCollection col tbl => Column typ TypColumn col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
 
-attrMissing :: Column tbl typ TypColumn -> FilterCondition tbl
+attrMissing :: InCollection col tbl => Column typ TypColumn col -> FilterCondition tbl
 attrMissing col = AttrMissing (nameGen col)
 
-beginsWith :: IsText typ => Column tbl typ TypColumn -> T.Text -> FilterCondition tbl
+beginsWith :: (InCollection col tbl, IsText typ) => Column typ TypColumn col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dEncode txt)
 
-contains :: IsText typ => Column tbl typ TypColumn -> T.Text -> FilterCondition tbl
+contains :: (InCollection col tbl, IsText typ) => Column typ TypColumn col -> T.Text -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dEncode txt)
 
 size :: Column typ TypColumn col -> Column Int TypSize col
-size (Column colname) = Size colname
+size Column = Size
 
 dcomp :: (InCollection col tbl, DynamoEncodable typ) => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
 dcomp op col val = Comparison (nameGen col) op (dEncode val)
