@@ -38,6 +38,7 @@ import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteItem  as D
 import qualified Network.AWS.DynamoDB.DeleteTable  as D
 import qualified Network.AWS.DynamoDB.Query  as D
+import qualified Network.AWS.DynamoDB.GetItem  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import           Network.AWS.DynamoDB.Types       (AttributeValue,
                                                    ProvisionedThroughput, keySchemaElement,
@@ -92,21 +93,34 @@ class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoTable a r 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
 
-  deleteItem :: (DeleteItem a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
+  deleteItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
       => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
   deleteItem = iDeleteItem (Proxy :: Proxy r)
 
+  getItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
+      => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+  getItem = iGetItem (Proxy :: Proxy r)
+
 -- | Dispatch class for NoRange/WithRange deleteItem
-class DeleteItem a r where
+class ItemOper a r where
   iDeleteItem :: (DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
             => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-instance DeleteItem a NoRange where
+  iGetItem :: (DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
+            => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+
+instance ItemOper a NoRange where
   iDeleteItem _ p key =
-        D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
-instance DeleteItem a WithRange where
+      D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
+  iGetItem _ p key =
+      D.getItem (tableName p) & D.giKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
+instance ItemOper a WithRange where
   iDeleteItem _ p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
+  iGetItem _ p (key, range) = D.getItem (tableName p) & D.giKey .~ HMap.fromList plist
+    where
+      plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
+
 
 -- | Dispatch class for NoRange/WithRange createTable
 class TableCreate a r where
