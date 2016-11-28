@@ -155,14 +155,14 @@ dcomp op col val = Comparison (nameGen col) op (dEncode val)
 (==.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (==.) = dcomp "="
 
-(<=.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
+(<=.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<=.) = dcomp "<="
 
-(<.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
+(<.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<.) = dcomp "<"
 
-(>.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
+(>.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (>.) = dcomp ">"
 
-(>=.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
+(>=.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (>=.) = dcomp ">="

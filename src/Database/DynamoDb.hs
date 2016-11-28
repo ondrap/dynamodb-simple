@@ -1,6 +1,10 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Database.DynamoDb (
     DynamoCollection(..)
@@ -40,20 +44,34 @@ instance DynamoTable Test WithRange IsTable
 data TestIndex = TestIndex {
     i_treti :: T.Text
   , i_paty :: BS.ByteString
+  , i_druhy :: T.Text
 } deriving (Show, GHC.Generic)
 instance Generic TestIndex
 instance HasDatatypeInfo TestIndex
 instance DynamoCollection TestIndex NoRange IsIndex
 instance DynamoIndex TestIndex Test NoRange IsIndex
 
-colPrvni :: Column Test Int TypColumn
-colPrvni = Column (ColName "prvni")
+data P_Prvni
+instance InCollection P_Prvni Test
+instance ColumnInfo P_Prvni where
+  columnName _ = "prvni"
+data P_Druhy
+instance InCollection P_Druhy Test
+instance InCollection P_Druhy TestIndex
+instance ColumnInfo P_Druhy where
+  columnName _ = "druhy"
+data P_Treti
+instance InCollection P_Treti Test
+instance InCollection P_Treti TestIndex
+instance ColumnInfo P_Treti where
+  columnName _ = "treti"
 
-colDruhy :: Column Test T.Text TypColumn
-colDruhy = Column (ColName "druhy")
+pattern ColPrvni = Column :: Column Int TypColumn P_Prvni
+pattern ColDruhy = Column :: Column T.Text TypColumn P_Druhy
+pattern ColTreti = Column :: Column T.Text TypColumn P_Treti
 
 x :: FilterCondition TestIndex
-x = (retype colPrvni ==. (13 :: Int)) &&. (size (retype colDruhy) >. 10)
+x = (ColTreti ==. "blabla") &&. (ColDruhy >. "test")
 
 test :: IO ()
 test = print (dumpCondition x)
