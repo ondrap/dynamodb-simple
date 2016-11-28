@@ -96,7 +96,7 @@ dumpCondition fcondition = evalSupply (go fcondition) names
         let (subst, ColName colname) = name idname
         vlist <- mapM (\val -> (,val) <$> supply) lst
         let expr = T.intercalate "," $ map ((":" <>) . fst) vlist
-        return (subst <> "IN (" <> expr <> ")", HMap.singleton idname colname, HMap.fromList vlist)
+        return (subst <> " IN (" <> expr <> ")", HMap.singleton idname colname, HMap.fromList vlist)
 
     go (AttrExists name) = do
       ident <- supply
