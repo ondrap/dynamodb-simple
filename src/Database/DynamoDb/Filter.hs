@@ -16,18 +16,16 @@ module Database.DynamoDb.Filter (
     , TypColumn
     , ColName(..)
     , dumpCondition
-    , retype
+    , InCollection
 ) where
 
 import           Control.Monad.Supply       (evalSupply, supply)
-import           Data.Coerce                (coerce)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
 import           Data.Monoid                ((<>))
 import qualified Data.Text                  as T
 import qualified Network.AWS.DynamoDB.Types as D
 
-import           Database.DynamoDb.Class
 import           Database.DynamoDb.Types
 
 -- | Support for Filter expressins
@@ -35,19 +33,17 @@ newtype ColName = ColName T.Text
   deriving (Show)
 data TypColumn
 data TypSize
-data Column tbl typ coltype where
-    Column :: ColName -> Column tbl typ TypColumn
-    Size :: ColName -> Column tbl Int TypSize
+data Column typ coltype col where
+    Column :: ColName -> Column typ TypColumn col
+    Size :: ColName -> Column Int TypSize col
 
 type NameGen = T.Text -> (T.Text, ColName)
-nameGen :: Column tbl typ ctyp -> NameGen
+nameGen :: Column typ ctyp col -> NameGen
 nameGen (Column name) subst = ("#" <> subst, name)
 nameGen (Size name) subst = ("size(#" <> subst <> ")", name)
 
--- | We need this to retype the columns to use filters on index tables
-retype :: (DynamoTable tbl1 r1 IsTable, DynamoIndex tbl2 tbl1 r2 IsIndex)
-    => Column tbl1 typ coltype -> Column tbl2 typ coltype
-retype = coerce
+-- | Signifies that the column is present in the table/index
+class InCollection col tbl
 
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
@@ -119,10 +115,10 @@ dumpCondition fcondition = evalSupply (go fcondition) names
           expr = "contains(" <> subst <> ", :" <> ident <> ")"
       return (expr, HMap.singleton ident colname, HMap.singleton ident val)
 
-between :: DynamoEncodable typ => Column tbl typ ctyp -> typ -> typ -> FilterCondition tbl
+between :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dEncode a) (dEncode b)
 
-valIn :: DynamoEncodable typ => Column tbl typ ctyp -> [typ] -> FilterCondition tbl
+valIn :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dEncode lst)
 
 attrExists :: Column tbl typ TypColumn -> FilterCondition tbl
@@ -137,10 +133,10 @@ beginsWith col txt = BeginsWith (nameGen col) (dEncode txt)
 contains :: IsText typ => Column tbl typ TypColumn -> T.Text -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dEncode txt)
 
-size :: Column tbl typ TypColumn -> Column tbl Int TypSize
+size :: Column typ TypColumn col -> Column Int TypSize col
 size (Column colname) = Size colname
 
-dcomp :: DynamoEncodable typ => T.Text -> Column tbl typ ctyp -> typ -> FilterCondition tbl
+dcomp :: (InCollection col tbl, DynamoEncodable typ) => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
 dcomp op col val = Comparison (nameGen col) op (dEncode val)
 
 (&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
@@ -149,17 +145,17 @@ dcomp op col val = Comparison (nameGen col) op (dEncode val)
 (||.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (||.) = Or
 
-(==.) :: DynamoEncodable typ => Column tbl typ ctyp -> typ -> FilterCondition tbl
+(==.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (==.) = dcomp "="
 
-(<=.) :: DynamoEncodable typ => Column tbl typ ctyp -> typ -> FilterCondition tbl
+(<=.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<=.) = dcomp "<="
 
-(<.) :: DynamoEncodable typ => Column tbl typ ctyp -> typ -> FilterCondition tbl
+(<.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<.) = dcomp "<"
 
-(>.) :: DynamoEncodable typ => Column tbl typ ctyp -> typ -> FilterCondition tbl
+(>.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (>.) = dcomp ">"
 
-(>=.) :: DynamoEncodable typ => Column tbl typ ctyp -> typ -> FilterCondition tbl
+(>=.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (>=.) = dcomp ">="
