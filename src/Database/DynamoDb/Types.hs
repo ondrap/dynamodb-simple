@@ -9,6 +9,8 @@ module Database.DynamoDb.Types (
   , rangeOper
   , rangeData
   , IsText
+  , Column(..)
+  , TypColumn, TypSize, ColName(..)
 ) where
 
 import           Control.Lens                ((.~), (^.))
@@ -134,3 +136,12 @@ rangeData (RangeGreaterThan a) = [(rangeKey, dEncode a)]
 rangeData (RangeGreaterThanE a) = [(rangeKey, dEncode a)]
 rangeData (RangeBetween s e) = [(rangeStart, dEncode s), (rangeEnd, dEncode e)]
 rangeData (RangeBeginsWith a) = [(rangeKey, dEncode a)]
+
+-- | Support for Filter expressins
+newtype ColName = ColName T.Text
+  deriving (Show)
+data TypColumn
+data TypSize
+data Column tbl typ coltype where
+    Column :: ColName -> Column tbl typ TypColumn
+    Size :: ColName -> Column tbl Int TypSize

@@ -50,10 +50,10 @@ colPrvni :: Column Test Int TypColumn
 colPrvni = Column (ColName "prvni")
 
 colDruhy :: Column Test T.Text TypColumn
-colDruhy = Column (ColName "prvni")
+colDruhy = Column (ColName "druhy")
 
 x :: FilterCondition Test
-x = colPrvni ==. (13 :: Int)
+x = (colPrvni ==. (13 :: Int)) &&. (size colDruhy >. 10)
 
 test :: IO ()
-test = print x
+test = print (dumpCondition x)
