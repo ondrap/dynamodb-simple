@@ -23,6 +23,7 @@ module Database.DynamoDb.Class (
   , NoRange, WithRange
   , IsTable, IsIndex
   , gdDecode
+  , translateFieldName
 ) where
 
 import           Control.Lens                     ((.~))
