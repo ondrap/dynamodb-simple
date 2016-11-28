@@ -28,9 +28,9 @@ import Database.DynamoDb.Filter
 data Test = Test {
     prvni :: Int
   , druhy :: T.Text
-  -- , treti :: T.Text
-  -- , ctvrty :: Maybe T.Text
-  -- , paty :: BS.ByteString
+  , treti :: T.Text
+  , ctvrty :: Maybe T.Text
+  , paty :: BS.ByteString
 } deriving (Show, GHC.Generic)
 instance Generic Test
 instance HasDatatypeInfo Test
@@ -52,8 +52,8 @@ colPrvni = Column (ColName "prvni")
 colDruhy :: Column Test T.Text TypColumn
 colDruhy = Column (ColName "druhy")
 
-x :: FilterCondition Test
-x = (colPrvni ==. (13 :: Int)) &&. (size colDruhy >. 10)
+x :: FilterCondition TestIndex
+x = (retype colPrvni ==. (13 :: Int)) &&. (size (retype colDruhy) >. 10)
 
 test :: IO ()
 test = print (dumpCondition x)

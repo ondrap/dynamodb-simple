@@ -16,22 +16,38 @@ module Database.DynamoDb.Filter (
     , TypColumn
     , ColName(..)
     , dumpCondition
+    , retype
 ) where
 
 import           Control.Monad.Supply       (evalSupply, supply)
+import           Data.Coerce                (coerce)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
 import           Data.Monoid                ((<>))
 import qualified Data.Text                  as T
 import qualified Network.AWS.DynamoDB.Types as D
 
+import           Database.DynamoDb.Class
 import           Database.DynamoDb.Types
 
+-- | Support for Filter expressins
+newtype ColName = ColName T.Text
+  deriving (Show)
+data TypColumn
+data TypSize
+data Column tbl typ coltype where
+    Column :: ColName -> Column tbl typ TypColumn
+    Size :: ColName -> Column tbl Int TypSize
 
 type NameGen = T.Text -> (T.Text, ColName)
 nameGen :: Column tbl typ ctyp -> NameGen
 nameGen (Column name) subst = ("#" <> subst, name)
 nameGen (Size name) subst = ("size(#" <> subst <> ")", name)
+
+-- | We need this to retype the columns to use filters on index tables
+retype :: (DynamoTable tbl1 r1 IsTable, DynamoIndex tbl2 tbl1 r2 IsIndex)
+    => Column tbl1 typ coltype -> Column tbl2 typ coltype
+retype = coerce
 
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
