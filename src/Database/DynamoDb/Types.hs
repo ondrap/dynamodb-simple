@@ -1,6 +1,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Database.DynamoDb.Types (
     DynamoEncodable(..)
@@ -9,6 +12,9 @@ module Database.DynamoDb.Types (
   , rangeOper
   , rangeData
   , IsText
+  , gdEncode
+  , gdDecode
+  , translateFieldName
 ) where
 
 import           Control.Lens                ((.~), (^.))
@@ -16,6 +22,7 @@ import qualified Data.ByteString             as BS
 import           Data.Double.Conversion.Text (toShortest)
 import           Data.Function               ((&))
 import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as HMap
 import           Data.Monoid                 ((<>))
 import           Data.Proxy
 import qualified Data.Set                    as Set
@@ -25,6 +32,8 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
+import           Generics.SOP
+
 
 class DynamoEncodable a => DynamoScalar a where
   dType :: Proxy a -> ScalarAttributeType
@@ -89,6 +98,63 @@ instance DynamoEncodable a => DynamoEncodable [a] where
   dEncode lst = attributeValue & D.avL .~ map dEncode lst
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
   dDecode Nothing = Nothing
+
+gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))
+  => a -> HashMap T.Text AttributeValue
+gdEncode a =
+  HMap.fromList $
+    case datatypeInfo (Proxy :: Proxy a) of
+      ADT _ _ cs -> gdEncode' cs (from a)
+      Newtype _ _ c -> gdEncode' (c :* Nil) (from a)
+  where
+    gdEncode' :: All2 DynamoEncodable xs => NP ConstructorInfo xs -> SOP I xs -> [(T.Text, AttributeValue)]
+    gdEncode' cs (SOP sop) = hcollapse $ hcliftA2 palldynamo gdEncodeRec cs sop
+
+    gdEncodeRec :: All DynamoEncodable xs => ConstructorInfo xs -> NP I xs -> K [(T.Text, AttributeValue)] xs
+    gdEncodeRec (Record _ ns) xs =
+        K $ hcollapse
+          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K (T.pack name, dEncode val)) ns xs
+    gdEncodeRec _ _ = error "Cannot serialize non-record types."
+
+    palldynamo :: Proxy (All DynamoEncodable)
+    palldynamo = Proxy
+
+    pdynamo :: Proxy DynamoEncodable
+    pdynamo = Proxy
+
+gdDecode ::
+    forall a xs. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
+  => HMap.HashMap T.Text AttributeValue -> Maybe a
+gdDecode attrs =
+    to . SOP . Z <$> hsequence (hcliftA dproxy decodeAttr (gdFieldNamesNP (Proxy :: Proxy a)))
+  where
+    decodeAttr :: DynamoEncodable b => K T.Text b -> Maybe b
+    decodeAttr (K name) = dDecode (HMap.lookup name attrs)
+    dproxy = Proxy :: Proxy DynamoEncodable
+
+gdFieldNamesNP :: forall a xs. (HasDatatypeInfo a, Code a ~ '[ xs ]) => Proxy a -> NP (K T.Text) xs
+gdFieldNamesNP _ =
+  case datatypeInfo (Proxy :: Proxy a) of
+    ADT _ _ cs ->
+        case hliftA getName cs of
+          start :* Nil -> start
+          _ -> error "Cannot happen - gdFieldNamesNP"
+    _ -> error "Cannot even patternmatch because of type error"
+  where
+    getName :: ConstructorInfo xsd -> NP (K T.Text) xsd
+    getName (Record _ fields) = hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
+    getName _ = error "Only records are supported."
+
+-- | Function that translates haskell field names to database field names
+translateFieldName :: String -> T.Text
+translateFieldName = T.pack . translate
+  where
+    translate ('_':rest) = rest
+    translate name
+      | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
+      | otherwise = name
+
+
 
 -- | Class to limit certain operations
 class IsNotNumber a

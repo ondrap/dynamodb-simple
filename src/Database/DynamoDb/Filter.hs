@@ -11,6 +11,7 @@ module Database.DynamoDb.Filter (
       FilterCondition(Not)
     , (&&.), (||.)
     , (==.), (>=.), (>.), (<=.), (<.)
+    , (<.>)
     , attrExists, attrMissing, beginsWith, contains, valIn, between
     , size
     , Column(Column)
@@ -32,13 +33,28 @@ import           Database.DynamoDb.Types
 
 data TypColumn
 data TypSize
+data TypCombined
 -- | Representation of a column for filter queries
 -- typ - datatype of column (Int, Text..)
 -- coltype - TypColumn or TypSize (result of size(column))
 -- col - instance of ColumnInfo, uniquely identify a column
 data Column typ coltype col where
     Column :: Column typ TypColumn col
-    Size :: Column Int TypSize col
+    Size :: T.Text -> Column Int TypSize col
+    Combined :: T.Text -> Column typ TypCombined col
+
+(<.>) :: forall typ col1 typ2 col2 ct2.
+        (InCollection col2 typ, ColumnInfo col1, ColumnInfo col2, IsColumn ct2)
+      => Column typ TypColumn col1 -> Column typ2 ct2 col2 -> Column typ2 TypCombined col1
+(<.>) Column Column = Combined (columnName (Proxy :: Proxy col1) <> "." <> columnName (Proxy :: Proxy col2))
+(<.>) Column (Combined cname) = Combined (columnName (Proxy :: Proxy col1) <> "." <> cname)
+(<.>) Column (Size _) = error "This cannot happen <.>"
+-- We need to associate from the right
+infixr 7 <.>
+
+class IsColumn a
+instance IsColumn TypColumn
+instance IsColumn TypCombined
 
 -- | Signifies that the column is present in the table/index
 class ColumnInfo col => InCollection col tbl
@@ -50,7 +66,8 @@ class ColumnInfo a where
 type NameGen = T.Text -> (T.Text, T.Text)
 nameGen :: forall typ ctyp col. ColumnInfo col => Column typ ctyp col -> NameGen
 nameGen Column subst = ("#" <> subst, columnName (Proxy :: Proxy col))
-nameGen Size subst = ("size(#" <> subst <> ")", columnName (Proxy :: Proxy col))
+nameGen (Size txt) subst = ("size(#" <> subst <> ")", txt)
+nameGen (Combined txt) subst = ("#" <> subst, txt)
 
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
@@ -128,41 +145,50 @@ between col a b = Between (nameGen col) (dEncode a) (dEncode b)
 valIn :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dEncode lst)
 
-attrExists :: InCollection col tbl => Column typ TypColumn col -> FilterCondition tbl
+attrExists :: (InCollection col tbl, IsColumn ct) => Column typ ct col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
 
-attrMissing :: InCollection col tbl => Column typ TypColumn col -> FilterCondition tbl
+attrMissing :: (InCollection col tbl, IsColumn ct) => Column typ ct col -> FilterCondition tbl
 attrMissing col = AttrMissing (nameGen col)
 
-beginsWith :: (InCollection col tbl, IsText typ) => Column typ TypColumn col -> T.Text -> FilterCondition tbl
+beginsWith :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dEncode txt)
 
-contains :: (InCollection col tbl, IsText typ) => Column typ TypColumn col -> T.Text -> FilterCondition tbl
+contains :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dEncode txt)
 
-size :: Column typ TypColumn col -> Column Int TypSize col
-size Column = Size
+size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int TypSize col
+size Column = Size (columnName (Proxy :: Proxy col))
+size (Combined txt) = Size txt
+size (Size _) = error "This cannot happen - size"
 
 dcomp :: (InCollection col tbl, DynamoEncodable typ) => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
 dcomp op col val = Comparison (nameGen col) op (dEncode val)
 
 (&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (&&.) = And
+infixr 3 &&.
 
 (||.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (||.) = Or
+infixr 3 ||.
 
 (==.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (==.) = dcomp "="
+infix 4 ==.
 
 (<=.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<=.) = dcomp "<="
+infix 4 <=.
 
 (<.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<.) = dcomp "<"
+infix 4 <.
 
 (>.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (>.) = dcomp ">"
+infix 4 >.
 
 (>=.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (>=.) = dcomp ">="
+infix 4 >=.

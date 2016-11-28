@@ -41,8 +41,7 @@ import qualified Network.AWS.DynamoDB.DeleteTable  as D
 import qualified Network.AWS.DynamoDB.Query  as D
 import qualified Network.AWS.DynamoDB.GetItem  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
-import           Network.AWS.DynamoDB.Types       (AttributeValue,
-                                                   ProvisionedThroughput, keySchemaElement,
+import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput, keySchemaElement,
                                                    globalSecondaryIndex)
 import qualified Network.AWS.DynamoDB.Types       as D
 
@@ -186,15 +185,20 @@ class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoIndex a pa
 
   createIndex ::
       (DynamoCollection a r t, DynamoIndex a parent r IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
-        Code a ~ '[hash ': rest ])
-         => Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
-  createIndex = defaultCreateIndex
+        RecordOK (Code a) r, Code a ~ '[hash ': range ': rest ], IndexCreate a r)
+         => Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+  createIndex = iCreateIndex (Proxy :: Proxy r)
 
-palldynamo :: Proxy (All DynamoEncodable)
-palldynamo = Proxy
+class IndexCreate a r where
+  iCreateIndex ::
+    (DynamoCollection a r t, DynamoIndex a parent r IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
+      RecordOK (Code a) r, Code a ~ '[hash ': range ': rest ])
+             => Proxy r -> Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+instance IndexCreate a NoRange where
+  iCreateIndex _ = defaultCreateIndex
+instance IndexCreate a WithRange where
+  iCreateIndex _ = defaultCreateIndexRange
 
-pdynamo :: Proxy DynamoEncodable
-pdynamo = Proxy
 
 gdConstrName :: forall a xss. (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ])
   => Proxy a -> T.Text
@@ -208,15 +212,6 @@ gdConstrName _ =
     getName (Constructor name) = K (T.pack name)
     getName (Infix name _ _) = K (T.pack name)
 
-
--- | Function that translates haskell field names to database field names
-translateFieldName :: String -> T.Text
-translateFieldName = T.pack . translate
-  where
-    translate ('_':rest) = rest
-    translate name
-      | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
-      | otherwise = name
 
 gdHashField :: forall a hash rest. (Generic a, HasDatatypeInfo a, Code a ~ '[ hash ': rest ] )
   => Proxy a -> (T.Text, Proxy hash)
@@ -257,51 +252,11 @@ gdFieldNames _ =
         K $ toNonEmpty $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
-gdFieldNamesNP :: forall a xs. (HasDatatypeInfo a, Code a ~ '[ xs ]) => Proxy a -> NP (K T.Text) xs
-gdFieldNamesNP _ =
-  case datatypeInfo (Proxy :: Proxy a) of
-    ADT _ _ cs ->
-        case hliftA getName cs of
-          start :* Nil -> start
-          _ -> error "Cannot happen - gdFieldNamesNP"
-    _ -> error "Cannot even patternmatch because of type error"
-  where
-    getName :: ConstructorInfo xsd -> NP (K T.Text) xsd
-    getName (Record _ fields) = hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
-    getName _ = error "Only records are supported."
-
-gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))
-  => a -> [(T.Text, AttributeValue)]
-gdEncode a =
-  case datatypeInfo (Proxy :: Proxy a) of
-    ADT _ _ cs -> gdEncode' cs (from a)
-    Newtype _ _ c -> gdEncode' (c :* Nil) (from a)
-  where
-    gdEncode' :: All2 DynamoEncodable xs => NP ConstructorInfo xs -> SOP I xs -> [(T.Text, AttributeValue)]
-    gdEncode' cs (SOP sop) = hcollapse $ hcliftA2 palldynamo gdEncodeRec cs sop
-
-    gdEncodeRec :: All DynamoEncodable xs => ConstructorInfo xs -> NP I xs -> K [(T.Text, AttributeValue)] xs
-    gdEncodeRec (Record _ ns) xs =
-        K $ hcollapse
-          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K (T.pack name, dEncode val)) ns xs
-    gdEncodeRec _ _ = error "Cannot serialize non-record types."
-
-gdDecode ::
-    forall a xs. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
-  => HMap.HashMap T.Text AttributeValue -> Maybe a
-gdDecode attrs =
-    to . SOP . Z <$> hsequence (hcliftA dproxy decodeAttr (gdFieldNamesNP (Proxy :: Proxy a)))
-  where
-    decodeAttr :: DynamoEncodable b => K T.Text b -> Maybe b
-    decodeAttr (K name) = dDecode (HMap.lookup name attrs)
-    dproxy = Proxy :: Proxy DynamoEncodable
-
 defaultPutItem ::
      (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), DynamoTable a r t)
   => a -> D.PutItem
-defaultPutItem item = D.putItem tblname & D.piItem .~ HMap.fromList attrs
+defaultPutItem item = D.putItem tblname & D.piItem .~ gdEncode item
   where
-    attrs = gdEncode item
     tblname = tableName (pure item)
 
 defaultCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK (Code a) NoRange, Code a ~ '[ hash ': rest ])
@@ -356,13 +311,34 @@ defaultQueryKeyRange p (key, range) =
 
 defaultCreateIndex :: forall a r parent r2 hash rest xs rest2 t t2.
   (DynamoCollection a r t, DynamoIndex a parent r IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
-    Code a ~ '[hash ': rest ]) =>
-  Proxy a -> ProvisionedThroughput -> D.GlobalSecondaryIndex
+    RecordOK (Code a) NoRange, Code a ~ '[hash ': rest ]) =>
+  Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateIndex p thr =
-    globalSecondaryIndex (indexName p) keyschema proj thr
+    (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
   where
-    (hashname :| rest) = primaryFields (Proxy :: Proxy a)
-    keyschema = keySchemaElement hashname D.Hash :| map (`keySchemaElement` D.Range) rest
+    (hashname, hashproxy) = gdHashField p
+    attrdefs = [D.attributeDefinition hashname (dType hashproxy)]
+    keyschema = keySchemaElement hashname D.Hash :| []
+    proj | Just lst <- nonEmpty attrlist =
+                    D.projection & D.pProjectionType .~ Just D.Include
+                                 & D.pNonKeyAttributes .~ Just lst
+         | otherwise = D.projection & D.pProjectionType .~ Just D.KeysOnly
+    parentKey = primaryFields (Proxy :: Proxy parent)
+    attrlist = filter (`notElem` (toList parentKey ++ [hashname])) $ toList $ gdFieldNames (Proxy :: Proxy a)
+
+defaultCreateIndexRange :: forall a r parent r2 hash rest xs rest2 t t2 range.
+  (DynamoCollection a r t, DynamoIndex a parent r IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
+    RecordOK (Code a) WithRange, Code a ~ '[hash ': range ': rest ]) =>
+  Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+defaultCreateIndexRange p thr =
+    (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
+  where
+    (hashname, hashproxy) = gdHashField p
+    (rangename, rangeproxy) = gdRangeField p
+    attrdefs = [D.attributeDefinition hashname (dType hashproxy), D.attributeDefinition rangename (dType rangeproxy)]
+    --
+    keyschema = keySchemaElement hashname D.Hash :| [keySchemaElement rangename D.Range]
+    --
     proj | Just lst <- nonEmpty attrlist =
                     D.projection & D.pProjectionType .~ Just D.Include
                                  & D.pNonKeyAttributes .~ Just lst

@@ -1,25 +1,26 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Database.DynamoDb.TH (
-  mkTableDefs
+    mkTableDefs
+  , deriveEncodable
+  , deriveEncCollection
 ) where
 
-import           Control.Lens                    (ix, over, _1)
-import           Control.Monad                   (forM_)
+import           Control.Lens                    (ix, over, _1, (.~), (^.))
+import           Control.Monad                   (forM_, void)
 import           Control.Monad.Trans.Class       (lift)
-import           Control.Monad.Trans.Writer.Lazy (execWriterT, tell)
+import           Control.Monad.Trans.Writer.Lazy (execWriterT, tell, WriterT)
 import           Data.Char                       (toUpper)
 import           Data.Monoid                     ((<>))
 import qualified Data.Text                       as T
 import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
+import           Network.AWS.DynamoDB.Types     (attributeValue, avM)
+import Data.Function ((&))
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
-
-getRecords :: Info -> Either String [(String, Type)]
-getRecords (TyConI (DataD _ _ _ [RecC _ vars] _)) = Right $ map (\(Name (OccName rname) _,_,typ) -> (rname, typ)) vars
-getRecords _ = Left "not a record declaration with 1 constructor"
+import           Database.DynamoDb.Types
 
 -- | Create instances, datatypes for table, fields and instances
 --
@@ -66,14 +67,7 @@ mkTableDefs (table, tblrange) indexes =
     say $ InstanceD [] (AppT (AppT (AppT (ConT ''DynamoTable) (ConT table)) (ConT (mrange tblrange))) (ConT ''IsTable)) []
     --
     tblFieldNames <- getFieldNames table
-    constrNames <- lift $ mapM (newName . toConstrName . fst) tblFieldNames
-    let patNames = map (mkName . toPatName . fst) tblFieldNames
-    forM_ (zip3 tblFieldNames constrNames patNames) $ \((fieldname, ltype), constr, pat) -> do
-        say $ DataD [] constr [] [] []
-        say $ InstanceD [] (AppT (AppT (ConT ''InCollection) (ConT constr)) (ConT table)) []
-        say $ InstanceD [] (AppT (ConT ''ColumnInfo) (ConT constr)) [FunD 'columnName [Clause [WildP] (NormalB (LitE (StringL fieldname))) []]]
-        say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT ''TypColumn)) (ConT constr))
-        say $ ValD (VarP pat) (NormalB (ConE 'Column)) []
+    constrNames <- buildColData table tblFieldNames
 
     let tableAssoc = zip (map fst tblFieldNames) (zip constrNames (map snd tblFieldNames))
 
@@ -94,14 +88,68 @@ mkTableDefs (table, tblrange) indexes =
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
   where
-    toConstrName = ("P_" <>) . over (ix 0) toUpper
-    toPatName = ("col" <> ) . over (ix 0) toUpper
-    say a = tell [a]
     mrange True = ''WithRange
     mrange False = ''NoRange
 
-    getFieldNames tbl = do
-        info <- lift $ reify tbl
-        case getRecords info of
-          Left err -> fail $ "Table " <> show tbl <> ": " <> err
-          Right lst -> return $ map (over _1 (T.unpack . translateFieldName)) lst
+
+getFieldNames :: Name -> WriterT [Dec] Q [(String, Type)]
+getFieldNames tbl = do
+    info <- lift $ reify tbl
+    case getRecords info of
+      Left err -> fail $ "Table " <> show tbl <> ": " <> err
+      Right lst -> return $ map (over _1 (T.unpack . translateFieldName)) lst
+  where
+    getRecords :: Info -> Either String [(String, Type)]
+    getRecords (TyConI (DataD _ _ _ [RecC _ vars] _)) = Right $ map (\(Name (OccName rname) _,_,typ) -> (rname, typ)) vars
+    getRecords _ = Left "not a record declaration with 1 constructor"
+
+toConstrName :: String -> String
+toConstrName = ("P_" <>) . over (ix 0) toUpper
+
+buildColData :: Name -> [(String, Type)] -> WriterT [Dec] Q [Name]
+buildColData table fieldlist = do
+    constrNames <- lift $ mapM (newName . toConstrName . fst) fieldlist
+    forM_ (zip fieldlist constrNames) $ \((fieldname, ltype), constr) -> do
+        let pat = mkName (toPatName fieldname)
+        say $ DataD [] constr [] [] []
+        say $ InstanceD [] (AppT (AppT (ConT ''InCollection) (ConT constr)) (ConT table)) []
+        say $ InstanceD [] (AppT (ConT ''ColumnInfo) (ConT constr)) [FunD 'columnName [Clause [WildP] (NormalB (LitE (StringL fieldname))) []]]
+        say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT ''TypColumn)) (ConT constr))
+        say $ ValD (VarP pat) (NormalB (ConE 'Column)) []
+    return constrNames
+  where
+    toPatName = ("col" <> ) . over (ix 0) toUpper
+
+say :: Monad m => t -> WriterT [t] m ()
+say a = tell [a]
+
+-- | Derive DynamoEncodable and prepare column instances for inner structures
+deriveEncCollection :: Name -> Q [Dec]
+deriveEncCollection table =
+  execWriterT $ do
+    say $ InstanceD [] (AppT (ConT ''Generic) (ConT table)) []
+    say $ InstanceD [] (AppT (ConT ''HasDatatypeInfo) (ConT table)) []
+    -- Create instance DynamoEncodable
+    enc <- lift $ deriveEncodable table
+    tell enc
+    -- Create column data
+    tblFieldNames <- getFieldNames table
+    void $ buildColData table tblFieldNames
+
+-- | Derive just the DynamoEncodable instance
+-- for structures that already have DynamoTable/DynamoIndex and you want to use
+-- them inside other records
+deriveEncodable :: Name -> Q [Dec]
+deriveEncodable table =
+  execWriterT $ do
+    attr1 <- lift $ newName "attr"
+    tbl1 <- lift $ newName "tbl"
+    say $ InstanceD [] (AppT (ConT ''DynamoEncodable) (ConT table))
+      [FunD 'dEncode [Clause [VarP tbl1]
+        (NormalB (InfixE (Just (VarE 'attributeValue))
+            (VarE '(Data.Function.&)) (Just (InfixE (Just (VarE 'avM))
+              (VarE '(.~)) (Just (AppE (VarE 'gdEncode) (VarE tbl1))))))) []],
+              FunD 'dDecode [Clause [ConP 'Just [VarP attr1]]
+              (NormalB (AppE (VarE 'gdDecode) (InfixE (Just (VarE attr1))
+               (VarE '(^.)) (Just (VarE 'avM))))) [],
+               Clause [ConP 'Nothing []] (NormalB (ConE 'Nothing)) []]]
