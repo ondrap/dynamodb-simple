@@ -15,8 +15,10 @@ module Database.DynamoDb.Types (
   , gdEncode
   , gdDecode
   , translateFieldName
+  , DynamoException(..)
 ) where
 
+import           Control.Exception           (Exception)
 import           Control.Lens                ((.~), (^.))
 import qualified Data.ByteString             as BS
 import           Data.Double.Conversion.Text (toShortest)
@@ -34,6 +36,10 @@ import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
 import           Generics.SOP
 
+
+data DynamoException = DynamoException String
+  deriving (Show)
+instance Exception DynamoException
 
 class DynamoEncodable a => DynamoScalar a where
   dType :: Proxy a -> ScalarAttributeType

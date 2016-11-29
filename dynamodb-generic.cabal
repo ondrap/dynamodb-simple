@@ -1,6 +1,6 @@
 name:                dynamodb-generic
 version:             0.1.0.0
-synopsis:            Helper utilities for working with DynamoDB database
+synopsis:            Framework for working with DynamoDB database
 -- description:
 license:             BSD3
 license-file:        LICENSE
@@ -13,14 +13,14 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Database.DynamoDb, Database.DynamoDb.Types, Database.DynamoDb.Class,
+  exposed-modules:     Database.DynamoDb, Database.DynamoDb.Types,
                        Database.DynamoDb.Filter, Database.DynamoDb.TH
-  -- other-modules:
+  other-modules:       Database.DynamoDb.Class, Database.DynamoDb.Migration
   -- other-extensions:
   build-depends:       base >=4.8 && <5, amazonka-dynamodb, generics-sop,
                        unordered-containers, text, lens, double-conversion,
                        semigroups, bytestring, containers, monad-supply,
-                       template-haskell, transformers,
+                       template-haskell, transformers, exceptions,
                        amazonka
                        -- semigroups - kvuli Data.List.NonEmpty, v GHC8 uz neni potreba
   hs-source-dirs:      src

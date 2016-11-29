@@ -1,25 +1,27 @@
 {-# LANGUAGE TemplateHaskell #-}
+
 module Database.DynamoDb.TH (
     mkTableDefs
   , deriveEncodable
   , deriveEncCollection
 ) where
 
-import           Control.Lens                    (ix, over, _1, (.~), (^.))
+import           Control.Lens                    (ix, over, (.~), (^.), _1)
 import           Control.Monad                   (forM_, void)
 import           Control.Monad.Trans.Class       (lift)
-import           Control.Monad.Trans.Writer.Lazy (execWriterT, tell, WriterT)
+import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
 import           Data.Char                       (toUpper)
+import           Data.Function                   ((&))
 import           Data.Monoid                     ((<>))
 import qualified Data.Text                       as T
 import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
-import           Network.AWS.DynamoDB.Types     (attributeValue, avM)
-import Data.Function ((&))
+import           Network.AWS.DynamoDB.Types      (attributeValue, avM)
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
+import           Database.DynamoDb.Migration     (runMigration)
 import           Database.DynamoDb.Types
 
 -- | Create instances, datatypes for table, fields and instances
@@ -55,10 +57,11 @@ import           Database.DynamoDb.Types
 -- >> colThird :: Column Int TypColumn P_Third0
 -- >> colThidr = Column
 mkTableDefs ::
-  (Name, Bool)      -- ^ Main record type name, bool indicates if it has a sort key
+    String -- ^ Name of the migration function
+  -> (Name, Bool)      -- ^ Main record type name, bool indicates if it has a sort key
   -> [(Name, Bool)] -- ^ Index records, bool indicates if it has a sort key
   -> Q [Dec]
-mkTableDefs (table, tblrange) indexes =
+mkTableDefs migname (table, tblrange) indexes =
   execWriterT $ do
     -- Instances for main table
     say $ InstanceD [] (AppT (ConT ''Generic) (ConT table)) []
@@ -87,11 +90,13 @@ mkTableDefs (table, tblrange) indexes =
                   | otherwise -> fail $ "Record '" <> fieldname <> "' form index " <> show idx <> " has different type from table " <> show table
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
+    migfunc <- lift $ mkMigrationFunc migname table (map fst indexes)
+    tell migfunc
   where
     mrange True = ''WithRange
     mrange False = ''NoRange
 
-
+-- | Reify name and return list of record fields with type
 getFieldNames :: Name -> WriterT [Dec] Q [(String, Type)]
 getFieldNames tbl = do
     info <- lift $ reify tbl
@@ -106,6 +111,7 @@ getFieldNames tbl = do
 toConstrName :: String -> String
 toConstrName = ("P_" <>) . over (ix 0) toUpper
 
+-- | Build P_Column0 data, add it to instances and make colColumn variable
 buildColData :: Name -> [(String, Type)] -> WriterT [Dec] Q [Name]
 buildColData table fieldlist = do
     constrNames <- lift $ mapM (newName . toConstrName . fst) fieldlist
@@ -139,6 +145,12 @@ deriveEncCollection table =
 -- | Derive just the DynamoEncodable instance
 -- for structures that already have DynamoTable/DynamoIndex and you want to use
 -- them inside other records
+--
+-- Creates:
+-- >>> instance DynamoEncodable Type where
+-- >>>   dEncode val = attr & avM .~ gdEncode val
+-- >>>   dDecode (Just attr) = gdDecode (attr ^. avM)
+-- >>>   dDecode Nothing = Nothing
 deriveEncodable :: Name -> Q [Dec]
 deriveEncodable table =
   execWriterT $ do
@@ -153,3 +165,14 @@ deriveEncodable table =
               (NormalB (AppE (VarE 'gdDecode) (InfixE (Just (VarE attr1))
                (VarE '(^.)) (Just (VarE 'avM))))) [],
                Clause [ConP 'Nothing []] (NormalB (ConE 'Nothing)) []]]
+
+
+mkMigrationFunc :: String -> Name -> [Name] -> Q [Dec]
+mkMigrationFunc name table indices = do
+    let lstmap = map idxtemplate indices
+    let funcname = mkName name
+    return [ValD (VarP funcname) (NormalB (AppE (AppE (VarE 'runMigration)
+              (SigE (ConE 'Proxy) (AppT (ConT ''Proxy)
+              (ConT table)))) (ListE lstmap))) []]
+  where
+    idxtemplate idx = AppE (VarE 'createIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
