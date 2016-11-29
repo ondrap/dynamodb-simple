@@ -37,7 +37,7 @@ import           Text.Read                   (readMaybe)
 import           Generics.SOP
 
 
-data DynamoException = DynamoException String
+data DynamoException = DynamoException T.Text
   deriving (Show)
 instance Exception DynamoException
 
