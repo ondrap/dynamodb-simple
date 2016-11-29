@@ -18,6 +18,7 @@ import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
 import           Network.AWS.DynamoDB.Types      (attributeValue, avM)
+import           Network.AWS (MonadAWS)
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
@@ -64,22 +65,25 @@ mkTableDefs ::
 mkTableDefs migname (table, tblrange) indexes =
   execWriterT $ do
     -- Instances for main table
-    say $ InstanceD [] (AppT (ConT ''Generic) (ConT table)) []
-    say $ InstanceD [] (AppT (ConT ''HasDatatypeInfo) (ConT table)) []
-    say $ InstanceD [] (AppT (AppT (AppT (ConT ''DynamoCollection) (ConT table)) (ConT (mrange tblrange))) (ConT ''IsTable)) []
-    say $ InstanceD [] (AppT (AppT (AppT (ConT ''DynamoTable) (ConT table)) (ConT (mrange tblrange))) (ConT ''IsTable)) []
+    lift [d|
+      instance Generic $(pure (ConT table))
+      instance HasDatatypeInfo $(pure (ConT table))
+      instance DynamoCollection $(pure (ConT table)) $(pure (ConT $ mrange tblrange)) IsTable
+      instance DynamoTable $(pure (ConT table)) $(pure (ConT $ mrange tblrange)) IsTable
+      |] >>= tell
     --
     tblFieldNames <- getFieldNames table
     constrNames <- buildColData table tblFieldNames
 
     let tableAssoc = zip (map fst tblFieldNames) (zip constrNames (map snd tblFieldNames))
-
     -- Instances for indices
     forM_ indexes $ \(idx, idxrange) -> do
-        say $ InstanceD [] (AppT (ConT ''Generic) (ConT idx)) []
-        say $ InstanceD [] (AppT (ConT ''HasDatatypeInfo) (ConT idx)) []
-        say $ InstanceD [] (AppT (AppT (AppT (ConT ''DynamoCollection) (ConT idx)) (ConT (mrange idxrange))) (ConT ''IsIndex)) []
-        say $ InstanceD [] (AppT (AppT (AppT (AppT (ConT ''DynamoIndex) (ConT idx)) (ConT table)) (ConT (mrange idxrange))) (ConT ''IsIndex)) []
+        lift [d|
+          instance Generic $(pure (ConT idx))
+          instance HasDatatypeInfo $(pure (ConT idx))
+          instance DynamoCollection $(pure (ConT idx)) $(pure (ConT $ mrange idxrange)) IsIndex
+          instance DynamoIndex $(pure (ConT idx)) $(pure (ConT table)) $(pure (ConT $ mrange idxrange)) IsIndex
+          |] >>= tell
 
         -- Check that all records from indices conform to main table and create instances
         instfields <- getFieldNames idx
@@ -118,8 +122,11 @@ buildColData table fieldlist = do
     forM_ (zip fieldlist constrNames) $ \((fieldname, ltype), constr) -> do
         let pat = mkName (toPatName fieldname)
         say $ DataD [] constr [] [] []
-        say $ InstanceD [] (AppT (AppT (ConT ''InCollection) (ConT constr)) (ConT table)) []
-        say $ InstanceD [] (AppT (ConT ''ColumnInfo) (ConT constr)) [FunD 'columnName [Clause [WildP] (NormalB (LitE (StringL fieldname))) []]]
+        lift [d|
+            instance InCollection $(pure (ConT constr)) $(pure (ConT table))
+            instance ColumnInfo $(pure (ConT constr)) where
+                columnName _ = T.pack fieldname
+          |] >>= tell
         say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT ''TypColumn)) (ConT constr))
         say $ ValD (VarP pat) (NormalB (ConE 'Column)) []
     return constrNames
@@ -148,31 +155,27 @@ deriveEncCollection table =
 --
 -- Creates:
 -- >>> instance DynamoEncodable Type where
--- >>>   dEncode val = attr & avM .~ gdEncode val
+-- >>>   dEncode val = attributeValue & avM .~ gdEncode val
 -- >>>   dDecode (Just attr) = gdDecode (attr ^. avM)
 -- >>>   dDecode Nothing = Nothing
 deriveEncodable :: Name -> Q [Dec]
 deriveEncodable table =
-  execWriterT $ do
-    attr1 <- lift $ newName "attr"
-    tbl1 <- lift $ newName "tbl"
-    say $ InstanceD [] (AppT (ConT ''DynamoEncodable) (ConT table))
-      [FunD 'dEncode [Clause [VarP tbl1]
-        (NormalB (InfixE (Just (VarE 'attributeValue))
-            (VarE '(Data.Function.&)) (Just (InfixE (Just (VarE 'avM))
-              (VarE '(.~)) (Just (AppE (VarE 'gdEncode) (VarE tbl1))))))) []],
-              FunD 'dDecode [Clause [ConP 'Just [VarP attr1]]
-              (NormalB (AppE (VarE 'gdDecode) (InfixE (Just (VarE attr1))
-               (VarE '(^.)) (Just (VarE 'avM))))) [],
-               Clause [ConP 'Nothing []] (NormalB (ConE 'Nothing)) []]]
+    [d|
+      instance DynamoEncodable $(pure (ConT table)) where
+        dEncode val = attributeValue & avM .~ gdEncode val
+        dDecode (Just attr) = gdDecode (attr ^. avM)
+        dDecode Nothing = Nothing
+      |]
 
-
+-- | Creates top-leval variable as a call to a migration function with partially applied createIndex
 mkMigrationFunc :: String -> Name -> [Name] -> Q [Dec]
 mkMigrationFunc name table indices = do
-    let lstmap = map idxtemplate indices
+    let lstmap = ListE (map idxtemplate indices)
     let funcname = mkName name
-    return [ValD (VarP funcname) (NormalB (AppE (AppE (VarE 'runMigration)
+    m <- newName "m"
+    let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)] (AppT (VarT m) (TupleT 0)))
+    return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (VarE 'runMigration)
               (SigE (ConE 'Proxy) (AppT (ConT ''Proxy)
-              (ConT table)))) (ListE lstmap))) []]
+              (ConT table)))) lstmap)) []]
   where
     idxtemplate idx = AppE (VarE 'createIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
