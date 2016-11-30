@@ -13,6 +13,7 @@ module Database.DynamoDb (
   , putItemBatch
   , getItem
   , deleteItem
+  , deleteItemBatch
   , deleteItemCond
 ) where
 
@@ -80,6 +81,18 @@ deleteItem :: forall m a r t key hash rest.
     (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> m ()
 deleteItem p pkey = void $ send (dDeleteItem p pkey)
+
+-- | Batch version of deleteItem
+deleteItemBatch :: forall m a r t key hash rest.
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
+    => Proxy a -> NonEmpty (PrimaryKey (Code a) r) -> m ()
+deleteItemBatch p keys =
+  let tblproxy = Proxy :: Proxy a
+      tblname = tableName tblproxy
+      wrequests = fmap mkrequest keys
+      mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest tblproxy key)
+      cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
+  in void $ send cmd
 
 -- | Delete item from the database by specifying the primary key and a condition
 deleteItemCond :: forall m a r t key hash rest.

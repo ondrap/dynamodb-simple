@@ -96,6 +96,9 @@ class (TableCreate a r, DynamoCollection a r t, Generic a, HasDatatypeInfo a, Al
   dDeleteItem :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
   dDeleteItem = iDeleteItem (Proxy :: Proxy r)
 
+  dDeleteRequest :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
+  dDeleteRequest = iDeleteRequest (Proxy :: Proxy r)
+
   dGetItem :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
   dGetItem = iGetItem (Proxy :: Proxy r)
 
@@ -103,16 +106,23 @@ class (TableCreate a r, DynamoCollection a r t, Generic a, HasDatatypeInfo a, Al
 class ItemOper a r where
   iDeleteItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
             => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+  iDeleteRequest :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+            => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
   iGetItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
             => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.GetItem
 
 instance ItemOper a NoRange where
   iDeleteItem _ p key =
       D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
+  iDeleteRequest _ p key =
+      D.deleteRequest & D.drKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
   iGetItem _ p key =
       D.getItem (tableName p) & D.giKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
 instance ItemOper a WithRange where
   iDeleteItem _ p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
+    where
+      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
+  iDeleteRequest _ p (key, range) = D.deleteRequest & D.drKey .~ HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
   iGetItem _ p (key, range) = D.getItem (tableName p) & D.giKey .~ HMap.fromList plist
