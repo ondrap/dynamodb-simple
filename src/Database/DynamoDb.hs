@@ -15,11 +15,16 @@ module Database.DynamoDb (
   , deleteItem
   , deleteItemBatch
   , deleteItemCond
+  , queryKey
 ) where
 
-import           Control.Lens                        (Iso', at, iso, (.~), (^.))
+import           Control.Lens                        (Iso', at, iso, view, (.~),
+                                                      (^.))
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
+import           Data.Bool                           (bool)
+import           Data.Conduit                        (Source, (=$=))
+import qualified Data.Conduit.List                   as CL
 import           Data.Function                       ((&))
 import           Data.List.NonEmpty
 import           Data.Monoid                         ((<>))
@@ -30,12 +35,14 @@ import           Network.AWS
 import qualified Network.AWS.DynamoDB.BatchWriteItem as D
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
+import qualified Network.AWS.DynamoDB.Query          as D
 import qualified Network.AWS.DynamoDB.Types          as D
-import Data.Bool (bool)
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
 import           Database.DynamoDb.Types
+
+
 
 -- | Parameter for queries involving read consistency settings
 data Consistency = Eventually | Strongly
@@ -64,8 +71,8 @@ putItemBatch items =
   in void $ send cmd
 
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table
-getItem :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
+getItem :: forall m a r t range hash rest.
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
     => Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
 getItem consistency key = do
   let cmd = dGetItem (Proxy :: Proxy a) key & D.giConsistentRead . consistencyL .~ consistency
@@ -78,14 +85,14 @@ getItem consistency key = do
               Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
 
 -- | Delete item from the database by specifying the primary key
-deleteItem :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
+deleteItem :: forall m a r t hash range rest.
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> m ()
 deleteItem p pkey = void $ send (dDeleteItem p pkey)
 
 -- | Batch version of deleteItem
-deleteItemBatch :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
+deleteItemBatch :: forall m a r t range hash rest.
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> NonEmpty (PrimaryKey (Code a) r) -> m ()
 deleteItemBatch p keys =
   let tblname = tableName p
@@ -96,8 +103,8 @@ deleteItemBatch p keys =
 
 -- | Delete item from the database by specifying the primary key and a condition
 -- Throws exception if the condition does not succeed
-deleteItemCond :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
+deleteItemCond :: forall m a r t hash range rest.
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
 deleteItemCond p pkey cond =
   let (expr, attnames, attvals) = dumpCondition cond
@@ -106,4 +113,14 @@ deleteItemCond p pkey cond =
                                & D.diConditionExpression .~ Just expr
   in void (send cmd)
 
--- | Query item in a database using range key
+-- | Query item in a database using range key; throw exception if an item cannot be decoded
+queryKey :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
+  => Consistency -> hash -> Maybe (RangeOper range) -> Source m a
+queryKey consistency key range = do
+    let query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
+    paginate query =$= CL.mapFoldable (view D.qrsItems) =$= CL.mapM decoder
+  where
+    decoder item =
+      case gdDecode item of
+        Just res -> return res
+        Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))

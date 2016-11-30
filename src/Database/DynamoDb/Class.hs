@@ -19,7 +19,7 @@ module Database.DynamoDb.Class (
     DynamoCollection(..)
   , DynamoTable(..)
   , DynamoIndex(..)
-  , dQueryKey, dQueryKeyRange
+  , dQueryKey
   , NoRange, WithRange
   , IsTable, IsIndex
   , gdDecode
@@ -27,6 +27,7 @@ module Database.DynamoDb.Class (
   , PrimaryKey
   , RecordOK
   , ItemOper
+  , TableQuery
 ) where
 
 import           Control.Lens                     ((.~))
@@ -140,38 +141,21 @@ instance TableCreate a WithRange where
   iCreateTable _ = defaultCreateTableRange
 
 -- | Instance for tables that can be queried
-class DynamoCollection a r t => TableQuery a r t where
-  type QueryRange (b :: [[k]]) r :: *
+class (RecordOK (Code a) WithRange, DynamoCollection a WithRange t) => TableQuery a t where
   -- | Return table name and index name
   qTableName :: Proxy a -> T.Text
   qIndexName :: Proxy a -> Maybe T.Text
-  -- | Create a query only by hash key
-  dQueryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
-  dQueryKey = defaultQueryKey
   -- | Create a query using both hash key and operation on range key
   -- On tables without range key, this degrades to queryKey
-  dQueryKeyRange ::
-        (TableQuery a r t, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
-      => Proxy a -> QueryRange (Code a) r -> D.Query
+  dQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ], RecordOK (Code a) WithRange)
+      => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 
-instance (DynamoTable a NoRange IsTable, Code a ~ '[ xs ]) => TableQuery a NoRange IsTable where
-  type QueryRange ('[ key ': rest ]) NoRange  = key
-  dQueryKeyRange = defaultQueryKey
+instance  (DynamoTable a WithRange IsTable, Code a ~ '[ xs ]) => TableQuery a IsTable where
+  dQueryKey = defaultQueryKey
   qTableName = tableName
   qIndexName _ = Nothing
-instance  (DynamoTable a WithRange IsTable, Code a ~ '[ xs ]) => TableQuery a WithRange IsTable where
-  type QueryRange ('[ key ': range ': rest ] ) WithRange  = (key, RangeOper range)
-  dQueryKeyRange = defaultQueryKeyRange
-  qTableName = tableName
-  qIndexName _ = Nothing
-instance (DynamoIndex a parent NoRange IsIndex, DynamoTable parent r1 t1, DynamoCollection a NoRange IsIndex, Code a ~ '[ xs ]) => TableQuery a NoRange IsIndex where
-  type QueryRange ('[ key ': rest ]) NoRange  = key
-  dQueryKeyRange = defaultQueryKey
-  qTableName _ = tableName (Proxy :: Proxy parent)
-  qIndexName = Just . indexName
-instance  (DynamoIndex a parent WithRange IsIndex, DynamoTable parent r1 t1, DynamoCollection a WithRange IsIndex, Code a ~ '[ xs ]) => TableQuery a WithRange IsIndex where
-  type QueryRange ('[ key ': range ': rest ] ) WithRange  = (key, RangeOper range)
-  dQueryKeyRange = defaultQueryKeyRange
+instance  (RecordOK (Code a) WithRange, DynamoIndex a parent WithRange IsIndex, DynamoTable parent r1 t1, DynamoCollection a WithRange IsIndex, Code a ~ '[ xs ]) => TableQuery a IsIndex where
+  dQueryKey = defaultQueryKey
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
 
@@ -182,8 +166,8 @@ type instance PrimaryKey ('[ key ': rest ]) NoRange = key
 
 -- | Constraint to check that hash/sort key are scalar
 type family RecordOK (a :: [[k]]) r :: Constraint
-type instance RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash)
-type instance RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range)
+type instance RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash, All DynamoEncodable rest)
+type instance RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range, All DynamoEncodable rest)
 
 -- | Class representing a Global Secondary Index
 class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoIndex a parent r t | a -> parent, a -> r where
@@ -288,29 +272,26 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType hashproxy),
                D.attributeDefinition rangename (dType rangeproxy)]
 
-defaultQueryKey :: (TableQuery a r t, Code a ~ '[ key ': rest ], DynamoCollection a r t, DynamoScalar key)
-  => Proxy a -> key -> D.Query
-defaultQueryKey p key =
+defaultQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ],
+                    RecordOK (Code a) WithRange)
+  => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
+defaultQueryKey p key Nothing =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
-                         & D.qExpressionAttributeNames .~ HMap.singleton "K" hashname
-                         & D.qExpressionAttributeValues .~ HMap.singleton "key" (dScalarEncode key)
+                         & D.qExpressionAttributeNames .~ HMap.singleton "#K" hashname
+                         & D.qExpressionAttributeValues .~ HMap.singleton ":key" (dScalarEncode key)
                          & D.qIndexName .~ qIndexName p
   where
     (hashname, _) = gdHashField p
-
-defaultQueryKeyRange :: (TableQuery a r t, Code a ~ '[ hash ': range ': rest ], DynamoCollection a r t,
-                          RecordOK (Code a) WithRange)
-  => Proxy a -> (hash, RangeOper range) -> D.Query
-defaultQueryKeyRange p (key, range) =
+defaultQueryKey p key (Just range) =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just condExpression
                          & D.qExpressionAttributeNames .~ attrnames
                          & D.qExpressionAttributeValues .~ attrvals
                          & D.qIndexName .~ qIndexName p
   where
-    rangeSubst = "R"
+    rangeSubst = "#R"
     condExpression = "#K = :key AND <> " <> rangeOper range rangeSubst
-    attrnames = HMap.fromList [("K", hashname), (rangeSubst, rangename)]
-    attrvals = HMap.fromList $ rangeData range ++ [("key", dScalarEncode key)]
+    attrnames = HMap.fromList [("#K", hashname), (rangeSubst, rangename)]
+    attrvals = HMap.fromList $ rangeData range ++ [(":key", dScalarEncode key)]
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
 
