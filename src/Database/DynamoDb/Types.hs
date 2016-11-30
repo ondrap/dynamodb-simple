@@ -5,6 +5,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Database.DynamoDb.Types (
     DynamoEncodable(..)
@@ -56,15 +58,15 @@ instance DynamoScalar BS.ByteString where
 
 -- | Helper function
 dScalarEncode :: DynamoEncodable a => a -> AttributeValue
-dScalarEncode = fromMaybe (error "dEncode return Null value") . dEncode
+dScalarEncode = fromMaybe (error "dEncode return Null value; this cannot happen") . dEncode
+
+-- | Helper pattern
+pattern EmptySet <- (Set.null -> True)
 
 class DynamoEncodable a where
   -- | Must return Just for scalar values
   dEncode :: a -> Maybe AttributeValue
   dDecode :: Maybe AttributeValue -> Maybe a
-  -- | Helper to allow 'colSomething == Nothing' to correctly fall back to attr_missing
-  dIsNothing :: a -> Bool
-  dIsNothing _ = False
 
 instance DynamoEncodable Integer where
   dEncode num = Just $ attributeValue & D.avN .~ (Just $ T.pack (show num))
@@ -88,14 +90,14 @@ instance DynamoEncodable T.Text where
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avS
-  dDecode Nothing = Nothing
+  dDecode Nothing = Just ""
 instance DynamoEncodable BS.ByteString where
   dEncode "" = Just $ attributeValue & D.avNULL .~ Just True
   dEncode t = Just $ attributeValue & D.avB .~ Just t
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avB
-  dDecode Nothing = Nothing
+  dDecode Nothing = Just ""
 
 -- | Maybe (Maybe a) will not work well; it will 'join' the result
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
@@ -103,21 +105,21 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
-  dIsNothing Nothing = True
-  dIsNothing _ = False
 instance DynamoEncodable (Set.Set T.Text) where
+  dEncode EmptySet = Just $ attributeValue & D.avNULL .~ Just True
   dEncode dta = Just $ attributeValue & D.avSS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avSS)
-  dDecode Nothing = Nothing
+  dDecode Nothing = Just mempty
 instance DynamoEncodable (Set.Set BS.ByteString) where
+  dEncode EmptySet = Just $ attributeValue & D.avNULL .~ Just True
   dEncode dta = Just $ attributeValue & D.avBS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avBS)
-  dDecode Nothing = Nothing
+  dDecode Nothing = Just mempty
 instance DynamoEncodable (Set.Set Int) where
+  dEncode EmptySet = Just $ attributeValue & D.avNULL .~ Just True
   dEncode dta = Just $ attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
-  dDecode Nothing = Nothing
   dDecode (Just attr) = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
--- | DynamoDB cannot represent empty items; {key:Maybe a} will lose Nothings
+  dDecode Nothing = Just mempty
 instance DynamoEncodable a => DynamoEncodable (HashMap T.Text a) where
   dEncode dta = Just $ attributeValue & D.avM .~ HMap.mapMaybe dEncode dta
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avM)

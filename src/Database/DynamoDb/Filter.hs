@@ -10,7 +10,7 @@
 module Database.DynamoDb.Filter (
       FilterCondition(Not)
     , (&&.), (||.)
-    , (==.), (>=.), (>.), (<=.), (<.)
+    , (==.), (/=.), (>=.), (>.), (<=.), (<.)
     , (<.>)
     , attrExists, attrMissing, beginsWith, contains, tcontains, valIn, between
     , size
@@ -21,9 +21,12 @@ module Database.DynamoDb.Filter (
     , ColumnInfo(..)
 ) where
 
+import           Control.Lens               ((.~), (^.))
 import           Control.Monad.Supply       (evalSupply, supply)
+import           Data.Function              ((&))
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
+import           Data.Maybe                 (fromMaybe)
 import           Data.Monoid                ((<>))
 import           Data.Proxy
 import qualified Data.Set                   as Set
@@ -176,7 +179,10 @@ size (Combined txt) = Size txt
 size (Size _) = error "This cannot happen - size"
 
 dcomp :: (InCollection col tbl, DynamoEncodable typ) => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
-dcomp op col val = Comparison (nameGen col) op (dScalarEncode val)
+dcomp op col val = Comparison (nameGen col) op encval
+  where
+    -- Ord comparing against nothing doesn't make much sense - failback to NULL
+    encval = fromMaybe (D.attributeValue & D.avNULL .~ Just True) (dEncode val)
 
 (&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (&&.) = And
@@ -187,10 +193,20 @@ infixr 3 &&.
 infixr 3 ||.
 
 (==.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
-(==.) col val
-  | dIsNothing val = AttrMissing (nameGen col) -- Hack to have '==. Nothing' correctly working
-  | otherwise = dcomp "=" col val
+(==.) col val =
+  case dEncode val of
+    -- Hack to have '==. Nothing' correctly working
+    Nothing -> AttrMissing (nameGen col)
+    -- Hack for '==. ""' or empty set to work correctly on non-initialized values
+    Just encval | encval ^. D.avNULL == Just True ->
+                          AttrMissing (nameGen col) ||. Comparison (nameGen col) "=" encval
+                | otherwise -> Comparison (nameGen col) "=" encval
 infix 4 ==.
+
+(/=.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
+(/=.) col val = Not (dcomp "=" col val)
+infix 4 /=.
+
 
 (<=.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl
 (<=.) = dcomp "<="
