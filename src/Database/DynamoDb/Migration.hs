@@ -2,34 +2,35 @@
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Database.DynamoDb.Migration (
   runMigration
 ) where
 
 import           Control.Concurrent                 (threadDelay)
-import           Control.Lens                       (ix, over, use, view, (%~),
-                                                     (.~), (^.), (^..), (^?),
-                                                     _1, _Just, filtered, set)
-import           Control.Monad                      (forM_, unless, void, when)
+import           Control.Lens                       (set, view, (%~), (.~),
+                                                     (^.), (^..), (^?), _Just)
+import           Control.Monad                      (unless, void, when)
 import           Control.Monad.Catch                (throwM)
 import           Control.Monad.IO.Class             (liftIO)
 import           Control.Monad.Loops                (whileM_)
 import           Control.Monad.Trans.AWS            (AWSConstraint)
-import           Data.ByteString.Builder            (Builder, stringUtf8)
+import           Data.Foldable                      (toList)
 import           Data.Function                      ((&))
 import qualified Data.HashMap.Strict                as HMap
-import           Data.List                          (nub)
+import           Data.List                          (nub, (\\))
+import           Data.Maybe                         (mapMaybe)
 import           Data.Monoid                        ((<>))
 import           Data.Proxy
+import qualified Data.Set                           as Set
 import qualified Data.Text                          as T
 import           Data.Text.Encoding                 (encodeUtf8Builder)
 import           Network.AWS
 import qualified Network.AWS.DynamoDB.CreateTable   as D
 import qualified Network.AWS.DynamoDB.DescribeTable as D
-import qualified Network.AWS.DynamoDB.UpdateTable as D
 import qualified Network.AWS.DynamoDB.Types         as D
-import Data.Maybe (mapMaybe)
+import qualified Network.AWS.DynamoDB.UpdateTable   as D
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Types
@@ -67,62 +68,90 @@ deleteIndices tblname indices = do
 createIndices :: forall m. MonadAWS m => D.CreateTable -> [D.GlobalSecondaryIndex] -> m ()
 createIndices table indices = do
     let tblname = table ^. D.ctTableName
-    let idxupdates = map (\idx -> set D.gsiuCreate (Just $ mkidx idx) D.globalSecondaryIndexUpdate) indices
+        idxupdates = map (\idx -> set D.gsiuCreate (Just $ mkidx idx) D.globalSecondaryIndexUpdate) indices
         cmd = D.updateTable tblname & D.utGlobalSecondaryIndexUpdates .~ idxupdates
                                     & D.utAttributeDefinitions .~ (table ^. D.ctAttributeDefinitions)
-    -- TODO: add attribute schema
     void $ send cmd
   where
     mkidx :: D.GlobalSecondaryIndex -> D.CreateGlobalSecondaryIndexAction
     mkidx idx = D.createGlobalSecondaryIndexAction (idx ^. D.gsiIndexName) (idx ^. D.gsiKeySchema)
                                                    (idx ^. D.gsiProjection) (idx ^. D.gsiProvisionedThroughput)
 
+-- | Compare intersection of new and old indexes and find inconsistent ones
+findInconsistentIdxes :: [D.GlobalSecondaryIndex] -> [D.GlobalSecondaryIndexDescription] -> [D.GlobalSecondaryIndex]
+findInconsistentIdxes newidxes oldidxes =
+    map fst $ filter hasConflict $ toList $ HMap.intersectionWith (,) newmap oldmap
+  where
+    newmap = HMap.fromList $ map (\idx -> (idx ^. D.gsiIndexName, idx)) newidxes
+    oldmap = HMap.fromList $ mapMaybe (\idx -> (,idx) <$> idx ^. D.gsidIndexName) oldidxes
+    --
+    hasConflict (newidx, oldix) = not (projectionOk newidx oldix && keysOk newidx oldix)
+    keysOk newidx oldidx = Just (newidx ^. D.gsiKeySchema) == oldidx ^. D.gsidKeySchema
+    -- Assume the indices were created by this module and we want them exactly the same
+    projectionOk newidx oldidx =
+        newprojtype == oldprojtype && newkeys == oldkeys
+      where
+          newprojtype = newidx ^? D.gsiProjection . D.pProjectionType . _Just
+          oldprojtype = oldidx ^? D.gsidProjection . _Just . D.pProjectionType . _Just
+          newkeys = Set.fromList $ newidx ^.. D.gsiProjection . D.pNonKeyAttributes . _Just . traverse
+          oldkeys = Set.fromList $ oldidx ^.. D.gsidProjection . _Just . D.pNonKeyAttributes . _Just . traverse
+
+-- | Compare indexes and return list of indices to delete and to create; indices to recreate are included
+compareIndexes :: D.CreateTable -> D.TableDescription -> ([T.Text], [D.GlobalSecondaryIndex])
+compareIndexes tabledef descr = (todelete, tocreate)
+  where
+    newidxlist = tabledef ^. D.ctGlobalSecondaryIndexes
+    oldidxlist = descr ^. D.tdGlobalSecondaryIndexes
+    newidxnames = newidxlist ^.. traverse . D.gsiIndexName
+    oldidxnames = oldidxlist ^.. traverse . D.gsidIndexName . _Just
+    --
+    recreate = findInconsistentIdxes newidxlist oldidxlist
+    todelete = map (view D.gsiIndexName) recreate ++ (oldidxnames \\ newidxnames)
+    tocreate = recreate ++ filter (\idx -> idx ^. D.gsiIndexName `notElem` oldidxnames) newidxlist
+
+-- | Main table migration code
 tryMigration :: (AWSConstraint r m, MonadAWS m) => D.CreateTable -> D.TableDescription -> m ()
 tryMigration tabledef descr = do
-  let tblname = tabledef ^. D.ctTableName
-  waitUntilTableActive tblname False
-  -- Check that attribute definitions do not conflict; intersection of definitions must be the same
-  let attrToTup = (,) <$> view D.adAttributeName <*> view D.adAttributeType
-      attrdefs = HMap.fromList $ map attrToTup (tabledef ^. D.ctAttributeDefinitions)
-      olddefs = HMap.fromList $ map attrToTup (descr ^. D.tdAttributeDefinitions)
-      commonkeys = HMap.intersectionWith (,) attrdefs olddefs
-      conflicts = HMap.filter (uncurry (/=)) commonkeys
-  unless (null conflicts) $ do
-      let msg = "Table or index " <> tblname <> " has conflicting hash/range keys: " <> T.pack (show $ HMap.toList conflicts)
-      logmsg Error msg
-      throwM (DynamoException msg)
+    -- Check key schema on the main table, fail if it changed
+    let tblkeys = tabledef ^. D.ctKeySchema
+        oldtblkeys = descr ^. D.tdKeySchema
+    when (Just tblkeys /= oldtblkeys) $ do
+        let msg = "Table " <> tblname <> " hash/range key mismatch; new table: "
+                    <> T.pack (show tblkeys) <> ", old table: " <> T.pack (show oldtblkeys)
+        logmsg Error msg
+        throwM (DynamoException msg)
 
-  -- Check key schema on the main table, fail if it changed
-  let tblkeys = tabledef ^. D.ctKeySchema
-      oldkeys = descr ^. D.tdKeySchema
-  when (Just tblkeys /= oldkeys) $ do
-      let msg = "Table " <> tblname <> " hash/range key mismatch; new table: "
-                  <> T.pack (show tblkeys) <> ", old table: " <> T.pack (show oldkeys)
-      logmsg Error msg
-      throwM (DynamoException msg)
+    liftIO $ print $ tabledef ^. D.ctAttributeDefinitions
+    liftIO $ print $ descr ^. D.tdAttributeDefinitions
+    -- Check that types of key attributes are the same
+    unless (null conflictTableAttrs) $ do
+        let msg = "Table or index " <> tblname <> " has conflicting attribute key types: " <> T.pack (show conflictTableAttrs)
+        logmsg Error msg
+        throwM (DynamoException msg)
 
-  -- Delete obsolete indices
-  let newidxlist = tabledef ^. D.ctGlobalSecondaryIndexes
-      oldidxlist = descr ^. D.tdGlobalSecondaryIndexes
-      newidxnames = newidxlist ^.. traverse . D.gsiIndexName
-      oldidxnames = oldidxlist ^.. traverse . D.gsidIndexName . _Just
-      -- There are many maybes in the lenses
-      todelete = oldidxlist ^.. traverse . D.gsidIndexName . _Just . filtered (`notElem` newidxnames)
-  unless (null todelete) $ do
-      logmsg Info $ "Deleting indices: " <> T.intercalate "," todelete
-      waitUntilTableActive tblname True
-      deleteIndices tblname todelete
+    -- Adjust indexes
+    let (todelete, tocreate) = compareIndexes tabledef descr
+    unless (null todelete) $ do
+        waitUntilTableActive tblname False
+        logmsg Info $ "Deleting indices: " <> T.intercalate "," todelete
+        deleteIndices tblname todelete
+    unless (null tocreate) $ do
+        waitUntilTableActive tblname True
+        logmsg Info $ "Create new indices: " <> T.intercalate "," (tocreate ^.. traverse . D.gsiIndexName)
+        createIndices tabledef tocreate
+    -- Done
+    logmsg Info $ "Table " <> tblname <> " schema check done."
+  where
+    tblname = tabledef ^. D.ctTableName
+    -- Compare tableattribute types from old and new tables
+    conflictTableAttrs =
+        let attrToTup = (,) <$> view D.adAttributeName <*> view D.adAttributeType
+            attrdefs = HMap.fromList $ map attrToTup (tabledef ^. D.ctAttributeDefinitions)
+            olddefs = HMap.fromList $ map attrToTup (descr ^. D.tdAttributeDefinitions)
+            commonkeys = HMap.intersectionWith (,) attrdefs olddefs
+        in
+            HMap.toList $ HMap.filter (uncurry (/=)) commonkeys
 
-  -- Check each index for
-  -- -- Check if index with same name has correct KeySchema;
-  -- -- Check if index with same name has same projection
-  -- -- * If any doesn't agree, drop index and recreate it
-  -- Create any non-existent indexes
-  let tocreate = filter (\idx -> idx ^. D.gsiIndexName `notElem` oldidxnames) newidxlist
-  unless (null tocreate) $ do
-      logmsg Info $ "Create new indices: " <> T.intercalate "," (tocreate ^.. traverse . D.gsiIndexName)
-      createIndices tabledef tocreate
-  logmsg Info $ "Table " <> tblname <> " schema check done."
 
 logmsg :: AWSConstraint r m => LogLevel -> T.Text -> m ()
 logmsg level text = do
