@@ -1,54 +1,65 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE EmptyDataDecls #-}
-{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE MultiWayIf          #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module Database.DynamoDb (
-    DynamoCollection(..)
-  , DynamoTable(..)
-  , DynamoIndex(..)
-  , queryKey, queryKeyRange
-  , NoRange, WithRange
-  , IsTable, IsIndex
+    DynamoException(..)
+  , Consistency(..)
+  , putItem
+  , getItem
 ) where
 
-import Data.Proxy
-import           Network.AWS.DynamoDB.Types       (AttributeValue,
-                                                   ProvisionedThroughput, keySchemaElement,
-                                                   globalSecondaryIndex, provisionedThroughput)
-import qualified Data.Text as T
+import           Control.Lens                 (Iso', iso, (.~), (^.))
+import           Control.Monad                (void)
+import           Control.Monad.Catch          (throwM)
+import           Data.Function                ((&))
+import           Data.Monoid                  ((<>))
+import           Data.Proxy
+import qualified Data.Text                    as T
 import           Generics.SOP
-import qualified GHC.Generics                     as GHC
-import qualified Data.ByteString as BS
-import qualified Network.AWS.DynamoDB.Types       as D
+import           Network.AWS
+import qualified Network.AWS.DynamoDB.GetItem as D
 
-import Database.DynamoDb.Class
-import Database.DynamoDb.Types
-import Database.DynamoDb.Filter
-import Database.DynamoDb.TH
+import           Database.DynamoDb.Class
+import           Database.DynamoDb.Filter
+import           Database.DynamoDb.Types
 
-data Test = Test {
-    prvni :: Int
-  , druhy :: T.Text
-  , treti :: T.Text
-  , ctvrty :: Maybe T.Text
-  , paty :: BS.ByteString
-} deriving (Show, GHC.Generic)
+-- | Parameter for queries involving read consistency settings
+data Consistency = Eventually | Strongly
+  deriving (Show)
 
-data TestIndex = TestIndex {
-    i_treti :: T.Text
-  , i_paty :: BS.ByteString
-  , i_druhy :: Int
-} deriving (Show, GHC.Generic)
+-- | Lens to help set consistency
+consistencyL :: Iso' (Maybe Bool) Consistency
+consistencyL = iso tocons fromcons
+  where
+    tocons (Just True) = Strongly
+    tocons _ = Eventually
+    fromcons Strongly = Just True
+    fromcons Eventually = Just False
 
-$(mkTableDefs (''Test, True) [(''TestIndex, False)])
+-- | Save item into the database
+putItem :: (MonadAWS m, DynamoTable a r t) => a -> m ()
+putItem item = void $ send (dPutItem item)
 
-x :: FilterCondition TestIndex
-x = (colTreti ==. "blabla") &&. (colDruhy >. "test")
+-- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table
+getItem :: forall m a r t key hash rest.
+    (MonadAWS m, DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ key ': hash ': rest], ItemOper a r, All2 DynamoEncodable (Code a))
+    => Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
+getItem consistency key = do
+  let cmd = dGetItem (Proxy :: Proxy a) key & D.giConsistentRead . consistencyL .~ consistency
+  rs <- send cmd
+  let result = rs ^. D.girsItem
+  if | null result -> return Nothing
+     | otherwise ->
+          case gdDecode result of
+              Just res -> return (Just res)
+              Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
 
-test :: IO ()
-test = print (dumpCondition x)
+-- | Query item in a database
+
+
+-- | Query item in a database using range key
