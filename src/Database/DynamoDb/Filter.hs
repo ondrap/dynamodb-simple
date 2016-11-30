@@ -70,6 +70,7 @@ nameGen Column subst = (subst, columnName (Proxy :: Proxy col))
 nameGen (Size txt) subst = ("size(" <> subst <> ")", txt)
 nameGen (Combined txt) subst = (subst, txt)
 
+-- |
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
     | Or (FilterCondition t) (FilterCondition t)
@@ -145,7 +146,7 @@ dumpCondition fcondition = evalSupply (go fcondition) names
           expr = "contains(" <> subst <> ", " <> idval <> ")"
       return (expr, HMap.singleton ident colname, HMap.singleton idval val)
 
-between :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
+between :: (Ord typ, InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
 valIn :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> [typ] -> FilterCondition tbl
@@ -160,14 +161,15 @@ attrMissing col = AttrMissing (nameGen col)
 beginsWith :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
 
--- | Version of contains on text-like attributes
+-- | CONTAINS condition for rext-like attributes
 tcontains :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
 tcontains col txt = Contains (nameGen col) (dScalarEncode txt)
 
--- | Version of contains on set-like attributes
+-- | CONTAINS condition for sets
 contains :: (InCollection col tbl, IsColumn ct, DynamoEncodable a) => Column (Set.Set a) ct col -> a -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
+-- | Size (i.e. number of bytes) of saved attribute
 size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int TypSize col
 size Column = Size (columnName (Proxy :: Proxy col))
 size (Combined txt) = Size txt

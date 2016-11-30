@@ -87,14 +87,14 @@ deleteItemBatch :: forall m a r t key hash rest.
     (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
     => Proxy a -> NonEmpty (PrimaryKey (Code a) r) -> m ()
 deleteItemBatch p keys =
-  let tblproxy = Proxy :: Proxy a
-      tblname = tableName tblproxy
+  let tblname = tableName p
       wrequests = fmap mkrequest keys
-      mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest tblproxy key)
+      mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest p key)
       cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
   in void $ send cmd
 
 -- | Delete item from the database by specifying the primary key and a condition
+-- Throws exception if the condition does not succeed
 deleteItemCond :: forall m a r t key hash rest.
     (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()

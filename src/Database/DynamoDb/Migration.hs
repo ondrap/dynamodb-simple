@@ -194,7 +194,7 @@ runMigration ptbl apindices = do
   let tbl = createTable ptbl (D.provisionedThroughput 5 5)
       indices = map ($ D.provisionedThroughput 5 5) apindices
       idxattrs = concatMap snd indices
-  -- | Bug in amazonka, we must not set the attribute if it is empty
+  -- Bug in amazonka, we must not set the attribute if it is empty
   -- see https://github.com/brendanhay/amazonka/issues/332
   let final = if | null apindices -> tbl
                  | otherwise -> tbl & D.ctGlobalSecondaryIndexes .~ map fst indices
