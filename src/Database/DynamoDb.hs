@@ -16,10 +16,11 @@ module Database.DynamoDb (
   , deleteItemBatch
   , deleteItemCond
   , queryKey
+  , queryKeyCond
 ) where
 
 import           Control.Lens                        (Iso', at, iso, view, (.~),
-                                                      (^.))
+                                                      (^.), (%~))
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
 import           Data.Bool                           (bool)
@@ -118,6 +119,22 @@ queryKey :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ 
   => Consistency -> hash -> Maybe (RangeOper range) -> Source m a
 queryKey consistency key range = do
     let query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
+    paginate query =$= CL.mapFoldable (view D.qrsItems) =$= CL.mapM decoder
+  where
+    decoder item =
+      case gdDecode item of
+        Just res -> return res
+        Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
+
+-- | Query item in a database, uses filter condition to further filter items server side
+queryKeyCond :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
+  => Consistency -> hash -> Maybe (RangeOper range) -> FilterCondition a -> Source m a
+queryKeyCond consistency key range cond = do
+    let (expr, attnames, attvals) = dumpCondition cond
+        query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
+                                                       & D.qExpressionAttributeNames %~ (<> attnames)
+                                                       & bool (D.qExpressionAttributeValues %~ (<> attvals)) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
+                                                       & D.qFilterExpression .~ Just expr
     paginate query =$= CL.mapFoldable (view D.qrsItems) =$= CL.mapM decoder
   where
     decoder item =

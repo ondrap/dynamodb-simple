@@ -69,4 +69,4 @@ In this framework an empty string is represented as `NULL`, `Nothing` is represe
 * `HashMap Text (Maybe a)` is not a good idea either; missing values will disappear
 * Don't try to use inequality comparisons (`>.`, `<.`) on empty strings
 * If you use `colMaybeCol == Nothing`, it gets internally replaced
-  by `attr_missing(colMaybeCol)`.
+  by `attr_missing(colMaybeCol)`, so it will behave as expected.
