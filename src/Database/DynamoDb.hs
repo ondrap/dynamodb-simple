@@ -11,6 +11,8 @@ module Database.DynamoDb (
   , Consistency(..)
   , putItem
   , getItem
+  , deleteItem
+  , deleteItemCond
 ) where
 
 import           Control.Lens                 (Iso', iso, (.~), (^.))
@@ -23,6 +25,7 @@ import qualified Data.Text                    as T
 import           Generics.SOP
 import           Network.AWS
 import qualified Network.AWS.DynamoDB.GetItem as D
+import qualified Network.AWS.DynamoDB.DeleteItem as D
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
@@ -59,7 +62,21 @@ getItem consistency key = do
               Just res -> return (Just res)
               Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
 
--- | Query item in a database
+-- | Delete item from the database by specifying the primary key
+deleteItem :: forall m a r t key hash rest.
+    (MonadAWS m, DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ key ': hash ': rest], ItemOper a r, All2 DynamoEncodable (Code a))
+    => Proxy a -> PrimaryKey (Code a) r -> m ()
+deleteItem p pkey = void $ send (dDeleteItem p pkey)
 
+-- | Delete item from the database by specifying the primary key and a condition
+deleteItemCond :: forall m a r t key hash rest.
+    (MonadAWS m, DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ key ': hash ': rest], ItemOper a r, All2 DynamoEncodable (Code a))
+    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
+deleteItemCond p pkey cond =
+  let (expr, attnames, attvals) = dumpCondition cond
+      cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
+                               & D.diExpressionAttributeValues .~ attvals
+                               & D.diConditionExpression .~ Just expr
+  in void (send cmd)
 
 -- | Query item in a database using range key

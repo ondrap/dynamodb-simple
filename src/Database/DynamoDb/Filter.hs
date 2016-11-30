@@ -66,9 +66,9 @@ class ColumnInfo a where
 
 type NameGen = T.Text -> (T.Text, T.Text)
 nameGen :: forall typ ctyp col. ColumnInfo col => Column typ ctyp col -> NameGen
-nameGen Column subst = ("#" <> subst, columnName (Proxy :: Proxy col))
-nameGen (Size txt) subst = ("size(#" <> subst <> ")", txt)
-nameGen (Combined txt) subst = ("#" <> subst, txt)
+nameGen Column subst = (subst, columnName (Proxy :: Proxy col))
+nameGen (Size txt) subst = ("size(" <> subst <> ")", txt)
+nameGen (Combined txt) subst = (subst, txt)
 
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
@@ -87,6 +87,8 @@ dumpCondition :: FilterCondition t -> (T.Text, HashMap T.Text T.Text, HashMap T.
 dumpCondition fcondition = evalSupply (go fcondition) names
   where
     names = map (\i -> T.pack ("G" <> show i)) ([1..] :: [Int])
+    supplyName = ("#" <>) <$> supply
+    supplyValue = (":" <> ) <$> supply
     go (And cond1 cond2) = do
         (t1, a1, v1) <- go cond1
         (t2, a2, v2) <- go cond2
@@ -99,46 +101,49 @@ dumpCondition fcondition = evalSupply (go fcondition) names
       (t, a, v) <- go cond
       return ("NOT (" <> t <> ")", a, v)
     go (Comparison name oper val) = do
-      ident <- supply
+      ident <- supplyName
+      idval <- supplyValue
       let (subst, colname) = name ident
-          expr = subst <> " " <> oper <> " :" <> ident
-      return (expr, HMap.singleton ident colname, HMap.singleton ident val)
+          expr = subst <> " " <> oper <> " " <> idval
+      return (expr, HMap.singleton ident colname, HMap.singleton idval val)
     go (Between name v1 v2) = do
-      idname <- supply
-      idstart <- supply
-      idstop <- supply
+      idname <- supplyName
+      idstart <- supplyValue
+      idstop <- supplyValue
       let (subst, colname) = name idname
-          expr = subst <> " BETWEEN :" <> idstart <> " AND :" <> idstop
+          expr = subst <> " BETWEEN " <> idstart <> " AND " <> idstop
           vals = HMap.fromList [(idstart, v1), (idstop, v2)]
       return (expr, HMap.singleton idname colname, vals)
 
     go (In name lst) = do
-        idname <- supply
+        idname <- supplyName
         let (subst, colname) = name idname
-        vlist <- mapM (\val -> (,val) <$> supply) lst
-        let expr = T.intercalate "," $ map ((":" <>) . fst) vlist
+        vlist <- mapM (\val -> (,val) <$> supplyValue) lst
+        let expr = T.intercalate "," $ map fst vlist
         return (subst <> " IN (" <> expr <> ")", HMap.singleton idname colname, HMap.fromList vlist)
 
     go (AttrExists name) = do
-      ident <- supply
+      ident <- supplyName
       let (subst, colname) = name ident
           expr = "attribute_exists(" <> subst <> ")"
       return (expr, HMap.singleton ident colname, HMap.empty)
     go (AttrMissing name) = do
-      ident <- supply
+      ident <- supplyName
       let (subst, colname) = name ident
           expr = "attribute_not_exists(" <> subst <> ")"
       return (expr, HMap.singleton ident colname, HMap.empty)
     go (BeginsWith name val) = do
-      ident <- supply
+      ident <- supplyName
+      idval <- supplyValue
       let (subst, colname) = name ident
-          expr = "begins_with(" <> subst <> ", :" <> ident <> ")"
-      return (expr, HMap.singleton ident colname, HMap.singleton ident val)
+          expr = "begins_with(" <> subst <> ", " <> idval <> ")"
+      return (expr, HMap.singleton ident colname, HMap.singleton idval val)
     go (Contains name val) = do
-      ident <- supply
+      ident <- supplyName
+      idval <- supplyValue
       let (subst, colname) = name ident
-          expr = "contains(" <> subst <> ", :" <> ident <> ")"
-      return (expr, HMap.singleton ident colname, HMap.singleton ident val)
+          expr = "contains(" <> subst <> ", " <> idval <> ")"
+      return (expr, HMap.singleton ident colname, HMap.singleton idval val)
 
 between :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
