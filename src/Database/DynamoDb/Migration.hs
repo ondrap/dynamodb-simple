@@ -41,9 +41,9 @@ getTableDescription tblname = do
       Just descr -> return descr
       Nothing -> throwM (DynamoException "getTableStatus - did not get correct data")
 
--- | Periodically check state of table, until it is ACTIVE; include all indices in the checks
-waitUntilTableActive :: forall r m. (AWSConstraint r m, MonadAWS m) => T.Text -> m ()
-waitUntilTableActive name =
+-- | Periodically check state of table, until it is ACTIVE
+waitUntilTableActive :: forall r m. (AWSConstraint r m, MonadAWS m) => T.Text -> Bool -> m ()
+waitUntilTableActive name checkindex =
     whileM_ tableIsNotActive $ do
         logmsg Info $ "Waiting for table " <> name <> " and its indices to become active"
         liftIO $ threadDelay 5000000
@@ -53,18 +53,34 @@ waitUntilTableActive name =
         descr <- getTableDescription name
         status <- maybe (throwM (DynamoException "Missing table status")) return (descr ^. D.tdTableStatus)
         let idxstatus = descr ^.. D.tdGlobalSecondaryIndexes . traverse . D.gsidIndexStatus . _Just
-        return (status /= D.Active || any (/= D.ISActive) idxstatus)
+        if | checkindex -> return (status /= D.Active || any (/= D.ISActive) idxstatus)
+           | otherwise -> return (status /= D.Active)
 
+-- | Delete specified indices from the database
 deleteIndices :: forall m. MonadAWS m => T.Text -> [T.Text] -> m ()
 deleteIndices tblname indices = do
   let idxupdates = map (\name -> set D.gsiuDelete (Just $ D.deleteGlobalSecondaryIndexAction name) D.globalSecondaryIndexUpdate) indices
-  let cmd = D.updateTable tblname & D.utGlobalSecondaryIndexUpdates .~ idxupdates
+      cmd = D.updateTable tblname & D.utGlobalSecondaryIndexUpdates .~ idxupdates
   void $ send cmd
+
+-- | Update table with specified new indices
+createIndices :: forall m. MonadAWS m => D.CreateTable -> [D.GlobalSecondaryIndex] -> m ()
+createIndices table indices = do
+    let tblname = table ^. D.ctTableName
+    let idxupdates = map (\idx -> set D.gsiuCreate (Just $ mkidx idx) D.globalSecondaryIndexUpdate) indices
+        cmd = D.updateTable tblname & D.utGlobalSecondaryIndexUpdates .~ idxupdates
+                                    & D.utAttributeDefinitions .~ (table ^. D.ctAttributeDefinitions)
+    -- TODO: add attribute schema
+    void $ send cmd
+  where
+    mkidx :: D.GlobalSecondaryIndex -> D.CreateGlobalSecondaryIndexAction
+    mkidx idx = D.createGlobalSecondaryIndexAction (idx ^. D.gsiIndexName) (idx ^. D.gsiKeySchema)
+                                                   (idx ^. D.gsiProjection) (idx ^. D.gsiProvisionedThroughput)
 
 tryMigration :: (AWSConstraint r m, MonadAWS m) => D.CreateTable -> D.TableDescription -> m ()
 tryMigration tabledef descr = do
   let tblname = tabledef ^. D.ctTableName
-  waitUntilTableActive tblname
+  waitUntilTableActive tblname False
   -- Check that attribute definitions do not conflict; intersection of definitions must be the same
   let attrToTup = (,) <$> view D.adAttributeName <*> view D.adAttributeType
       attrdefs = HMap.fromList $ map attrToTup (tabledef ^. D.ctAttributeDefinitions)
@@ -89,20 +105,23 @@ tryMigration tabledef descr = do
   let newidxlist = tabledef ^. D.ctGlobalSecondaryIndexes
       oldidxlist = descr ^. D.tdGlobalSecondaryIndexes
       newidxnames = newidxlist ^.. traverse . D.gsiIndexName
+      oldidxnames = oldidxlist ^.. traverse . D.gsidIndexName . _Just
       -- There are many maybes in the lenses
       todelete = oldidxlist ^.. traverse . D.gsidIndexName . _Just . filtered (`notElem` newidxnames)
   unless (null todelete) $ do
       logmsg Info $ "Deleting indices: " <> T.intercalate "," todelete
+      waitUntilTableActive tblname True
       deleteIndices tblname todelete
-      waitUntilTableActive tblname
 
   -- Check each index for
   -- -- Check if index with same name has correct KeySchema;
   -- -- Check if index with same name has same projection
   -- -- * If any doesn't agree, drop index and recreate it
   -- Create any non-existent indexes
-  -- TODO
-
+  let tocreate = filter (\idx -> idx ^. D.gsiIndexName `notElem` oldidxnames) newidxlist
+  unless (null tocreate) $ do
+      logmsg Info $ "Create new indices: " <> T.intercalate "," (tocreate ^.. traverse . D.gsiIndexName)
+      createIndices tabledef tocreate
   logmsg Info $ "Table " <> tblname <> " schema check done."
 
 logmsg :: AWSConstraint r m => LogLevel -> T.Text -> m ()
@@ -141,10 +160,10 @@ runMigration :: (DynamoTable table r IsTable, MonadAWS m) =>
 runMigration ptbl apindices = do
   let tbl = createTable ptbl (D.provisionedThroughput 5 5)
       indices = map ($ D.provisionedThroughput 5 5) apindices
-      idattrs = concatMap snd indices
+      idxattrs = concatMap snd indices
   -- | Bug in amazonka, we must not set the attribute if it is empty
   -- see https://github.com/brendanhay/amazonka/issues/332
   let final = if | null apindices -> tbl
                  | otherwise -> tbl & D.ctGlobalSecondaryIndexes .~ map fst indices
-                                    & D.ctAttributeDefinitions %~ (\old -> nub (concat (old : [idattrs])))
+                                    & D.ctAttributeDefinitions %~ (\old -> nub (concat (old : [idxattrs])))
   liftAWS $ createOrMigrate final
