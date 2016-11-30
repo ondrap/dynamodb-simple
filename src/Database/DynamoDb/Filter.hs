@@ -187,7 +187,9 @@ infixr 3 &&.
 infixr 3 ||.
 
 (==.) :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> FilterCondition tbl
-(==.) = dcomp "="
+(==.) col val
+  | dIsNothing val = AttrMissing (nameGen col) -- Hack to have '==. Nothing' correctly working
+  | otherwise = dcomp "=" col val
 infix 4 ==.
 
 (<=.) :: (InCollection col tbl, DynamoEncodable typ, Ord typ) => Column typ ctyp col -> typ -> FilterCondition tbl

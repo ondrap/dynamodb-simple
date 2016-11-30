@@ -56,3 +56,17 @@ test = do
       item2 <- getItem Eventually ("news", "john")
       liftIO $ print (item2 :: Maybe Test)
 ````
+
+### Handling of NULLs
+
+DynamoDB does not accept empty strings. On the other hand there is a difference between `NULL` and `missing field`.
+It's not obvious how to represent the `Maybe a` datatype and in particular `Maybe Text` datatype.
+
+In this framework an empty string is represented as `NULL`, `Nothing` is represented by omitting the value.
+
+* `Just Nothing :: Maybe (Maybe a)` will become `Nothing` on retrieval
+* `[Maybe a]` is not a good idea. `[Just 1, Nothing, Just 3]` will become `[Just 1, Just 3]` on retrieval
+* `HashMap Text (Maybe a)` is not a good idea either; missing values will disappear
+* Don't try to use inequality comparisons (`>.`, `<.`) on empty strings
+* If you use `colMaybeCol == Nothing`, it gets internally replaced
+  by `attr_missing(colMaybeCol)`.

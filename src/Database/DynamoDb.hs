@@ -31,6 +31,7 @@ import qualified Network.AWS.DynamoDB.BatchWriteItem as D
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
 import qualified Network.AWS.DynamoDB.Types          as D
+import Data.Bool (bool)
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
@@ -101,7 +102,7 @@ deleteItemCond :: forall m a r t key hash rest.
 deleteItemCond p pkey cond =
   let (expr, attnames, attvals) = dumpCondition cond
       cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
-                               & D.diExpressionAttributeValues .~ attvals
+                               & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
                                & D.diConditionExpression .~ Just expr
   in void (send cmd)
 

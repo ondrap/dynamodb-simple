@@ -18,6 +18,7 @@ module Database.DynamoDb.Types (
   , translateFieldName
   , DynamoException(..)
   , catMaybes
+  , dScalarEncode
 ) where
 
 import           Control.Exception           (Exception)
@@ -53,12 +54,17 @@ instance DynamoScalar T.Text where
 instance DynamoScalar BS.ByteString where
   dType _ = D.B
 
+-- | Helper function
+dScalarEncode :: DynamoEncodable a => a -> AttributeValue
+dScalarEncode = fromMaybe (error "dEncode return Null value") . dEncode
+
 class DynamoEncodable a where
+  -- | Must return Just for scalar values
   dEncode :: a -> Maybe AttributeValue
   dDecode :: Maybe AttributeValue -> Maybe a
-  -- | Law: must be total function for Scalar values;
-  dScalarEncode :: a -> AttributeValue
-  dScalarEncode = fromMaybe (error "dEncode return Null value") . dEncode
+  -- | Helper to allow 'colSomething == Nothing' to correctly fall back to attr_missing
+  dIsNothing :: a -> Bool
+  dIsNothing _ = False
 
 instance DynamoEncodable Integer where
   dEncode num = Just $ attributeValue & D.avN .~ (Just $ T.pack (show num))
@@ -79,7 +85,6 @@ instance DynamoEncodable Bool where
 instance DynamoEncodable T.Text where
   dEncode "" = Just $ attributeValue & D.avNULL .~ Just True-- Empty string is not supported, use null
   dEncode t = Just $ attributeValue & D.avS .~ Just t
-  dScalarEncode t = attributeValue & D.avS .~ Just t
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avS
@@ -87,7 +92,6 @@ instance DynamoEncodable T.Text where
 instance DynamoEncodable BS.ByteString where
   dEncode "" = Just $ attributeValue & D.avNULL .~ Just True
   dEncode t = Just $ attributeValue & D.avB .~ Just t
-  dScalarEncode t = attributeValue & D.avB .~ Just t
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avB
@@ -99,6 +103,8 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
+  dIsNothing Nothing = True
+  dIsNothing _ = False
 instance DynamoEncodable (Set.Set T.Text) where
   dEncode dta = Just $ attributeValue & D.avSS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avSS)
