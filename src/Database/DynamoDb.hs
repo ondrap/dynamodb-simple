@@ -10,22 +10,26 @@ module Database.DynamoDb (
     DynamoException(..)
   , Consistency(..)
   , putItem
+  , putItemBatch
   , getItem
   , deleteItem
   , deleteItemCond
 ) where
 
-import           Control.Lens                 (Iso', iso, (.~), (^.))
-import           Control.Monad                (void)
-import           Control.Monad.Catch          (throwM)
-import           Data.Function                ((&))
-import           Data.Monoid                  ((<>))
+import           Control.Lens                        (Iso', at, iso, (.~), (^.))
+import           Control.Monad                       (void)
+import           Control.Monad.Catch                 (throwM)
+import           Data.Function                       ((&))
+import           Data.List.NonEmpty
+import           Data.Monoid                         ((<>))
 import           Data.Proxy
-import qualified Data.Text                    as T
+import qualified Data.Text                           as T
 import           Generics.SOP
 import           Network.AWS
-import qualified Network.AWS.DynamoDB.GetItem as D
-import qualified Network.AWS.DynamoDB.DeleteItem as D
+import qualified Network.AWS.DynamoDB.BatchWriteItem as D
+import qualified Network.AWS.DynamoDB.DeleteItem     as D
+import qualified Network.AWS.DynamoDB.GetItem        as D
+import qualified Network.AWS.DynamoDB.Types          as D
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
@@ -48,9 +52,18 @@ consistencyL = iso tocons fromcons
 putItem :: (MonadAWS m, DynamoTable a r t) => a -> m ()
 putItem item = void $ send (dPutItem item)
 
+-- | Batch write into the database
+putItemBatch :: forall m a r t. (MonadAWS m, DynamoTable a r t) => NonEmpty a -> m ()
+putItemBatch items =
+  let tblname = tableName (Proxy :: Proxy a)
+      wrequests = fmap mkrequest items
+      mkrequest item = D.writeRequest & D.wrPutRequest .~ Just (D.putRequest & D.prItem .~ gdEncode item)
+      cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
+  in void $ send cmd
+
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table
 getItem :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ key ': hash ': rest], ItemOper a r, All2 DynamoEncodable (Code a))
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
     => Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
 getItem consistency key = do
   let cmd = dGetItem (Proxy :: Proxy a) key & D.giConsistentRead . consistencyL .~ consistency
@@ -64,13 +77,13 @@ getItem consistency key = do
 
 -- | Delete item from the database by specifying the primary key
 deleteItem :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ key ': hash ': rest], ItemOper a r, All2 DynamoEncodable (Code a))
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> m ()
 deleteItem p pkey = void $ send (dDeleteItem p pkey)
 
 -- | Delete item from the database by specifying the primary key and a condition
 deleteItemCond :: forall m a r t key hash rest.
-    (MonadAWS m, DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ key ': hash ': rest], ItemOper a r, All2 DynamoEncodable (Code a))
+    (MonadAWS m, DynamoTable a r t, Code a ~ '[ key ': hash ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
 deleteItemCond p pkey cond =
   let (expr, attnames, attvals) = dumpCondition cond

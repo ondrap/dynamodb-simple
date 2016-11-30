@@ -3,6 +3,9 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE DataKinds       #-}
+{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE TypeFamilies       #-}
 
 module Database.DynamoDb.Migration (
   runMigration
@@ -26,6 +29,7 @@ import           Data.Proxy
 import qualified Data.Set                           as Set
 import qualified Data.Text                          as T
 import           Data.Text.Encoding                 (encodeUtf8Builder)
+import           Generics.SOP
 import           Network.AWS
 import qualified Network.AWS.DynamoDB.CreateTable   as D
 import qualified Network.AWS.DynamoDB.DescribeTable as D
@@ -184,7 +188,7 @@ createOrMigrate tabledef = do
             tryMigration tabledef descr
         | otherwise -> throwM (DynamoException "Didn't receive correct table description.")
 
-runMigration :: (DynamoTable table r IsTable, MonadAWS m) =>
+runMigration :: (DynamoTable table r IsTable, MonadAWS m, Code table ~ '[ hash ': range ': rest ]) =>
   Proxy table -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])] -> m ()
 runMigration ptbl apindices = do
   let tbl = createTable ptbl (D.provisionedThroughput 5 5)

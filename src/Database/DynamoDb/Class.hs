@@ -75,7 +75,8 @@ instance PrimaryFieldCount WithRange where
   primaryFieldCount _ = 2
 
 -- | Descritpion of dynamo table
-class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoTable a r t | a -> r where
+class (TableCreate a r, DynamoCollection a r t, Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a),
+       RecordOK (Code a) r, ItemOper a r) => DynamoTable a r t | a -> r where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
   default tableName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
@@ -83,32 +84,26 @@ class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoTable a r 
 
   -- | Serialize data, put it into the database
   dPutItem :: a -> D.PutItem
-  default dPutItem :: (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a)) => a -> D.PutItem
   dPutItem = defaultPutItem
 
   -- |
-  createTable :: Proxy a -> ProvisionedThroughput -> D.CreateTable
-  default createTable :: (TableCreate a r, Generic a, HasDatatypeInfo a, RecordOK (Code a) r,
-                          Code a ~ '[ hash ': range ': rest ])
-                           => Proxy a -> ProvisionedThroughput -> D.CreateTable
+  createTable :: Code a ~ '[ hash ': range ': rest ] => Proxy a -> ProvisionedThroughput -> D.CreateTable
   createTable = iCreateTable (Proxy :: Proxy r)
 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
 
-  dDeleteItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
-      => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+  dDeleteItem :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
   dDeleteItem = iDeleteItem (Proxy :: Proxy r)
 
-  dGetItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
-      => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+  dGetItem :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
   dGetItem = iGetItem (Proxy :: Proxy r)
 
 -- | Dispatch class for NoRange/WithRange deleteItem
 class ItemOper a r where
-  iDeleteItem :: (DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
+  iDeleteItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
             => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-  iGetItem :: (DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
+  iGetItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
             => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.GetItem
 
 instance ItemOper a NoRange where
@@ -127,7 +122,7 @@ instance ItemOper a WithRange where
 
 -- | Dispatch class for NoRange/WithRange createTable
 class TableCreate a r where
-  iCreateTable :: (DynamoTable a r t, RecordOK (Code a) r, Code a ~ '[ hash ': range ': xss ])
+  iCreateTable :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
                            => Proxy r -> Proxy a -> ProvisionedThroughput -> D.CreateTable
 instance TableCreate a NoRange where
   iCreateTable _ = defaultCreateTable
@@ -255,14 +250,12 @@ gdFieldNames _ =
         K $ toNonEmpty $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
-defaultPutItem ::
-     (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), DynamoTable a r t)
-  => a -> D.PutItem
+defaultPutItem :: forall a r t. DynamoTable a r t => a -> D.PutItem
 defaultPutItem item = D.putItem tblname & D.piItem .~ gdEncode item
   where
-    tblname = tableName (pure item)
+    tblname = tableName (Proxy :: Proxy a)
 
-defaultCreateTable :: (Generic a, HasDatatypeInfo a, RecordOK (Code a) NoRange, Code a ~ '[ hash ': rest ])
+defaultCreateTable :: (DynamoTable a NoRange t, Code a ~ '[ hash ': rest ])
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTable p thr =
     D.createTable (gdConstrName p) (hashKey :| []) thr
@@ -272,8 +265,7 @@ defaultCreateTable p thr =
     hashKey = keySchemaElement firstname D.Hash
     keyDefs = [D.attributeDefinition firstname (dType firstproxy)]
 
-defaultCreateTableRange ::
-    (Generic a, HasDatatypeInfo a, RecordOK (Code a) WithRange, Code a ~ '[ hash ': range ': rest ])
+defaultCreateTableRange :: (DynamoTable a WithRange t, Code a ~ '[ hash ': range ': rest ])
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTableRange p thr =
     D.createTable (gdConstrName p) (hashKey :| [rangeKey]) thr
