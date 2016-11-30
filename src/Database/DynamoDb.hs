@@ -18,6 +18,7 @@ module Database.DynamoDb (
   , queryKey
   , queryKeyCond
   , scan
+  , scanCond
 ) where
 
 import           Control.Lens                        (Iso', at, iso, view, (.~),
@@ -145,8 +146,20 @@ queryKeyCond consistency key range cond = do
                                                        & D.qFilterExpression .~ Just expr
     paginate query =$= rsDecode (view D.qrsItems)
 
+-- | Read full contents of the table or index
 scan :: forall a m hash range rest r t.
     (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t) => Consistency -> Source m a
 scan consistency = do
     let cmd = dScan (Proxy :: Proxy a) & D.sConsistentRead .consistencyL .~ consistency
+    paginate cmd =$= rsDecode (view D.srsItems)
+
+scanCond :: forall a m hash range rest r t.
+    (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t)
+    => Consistency -> FilterCondition a -> Source m a
+scanCond consistency cond = do
+    let (expr, attnames, attvals) = dumpCondition cond
+        cmd = dScan (Proxy :: Proxy a) & D.sConsistentRead . consistencyL .~ consistency
+                                       & D.sExpressionAttributeNames .~ attnames
+                                       & bool (D.sExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
+                                       & D.sFilterExpression .~ Just expr
     paginate cmd =$= rsDecode (view D.srsItems)
