@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TupleSections #-}
 
 module Database.DynamoDb.Types (
     DynamoEncodable(..)
@@ -16,6 +17,7 @@ module Database.DynamoDb.Types (
   , gdDecode
   , translateFieldName
   , DynamoException(..)
+  , catMaybes
 ) where
 
 import           Control.Exception           (Exception)
@@ -25,6 +27,7 @@ import           Data.Double.Conversion.Text (toShortest)
 import           Data.Function               ((&))
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
+import           Data.Maybe                  (catMaybes, mapMaybe, fromMaybe)
 import           Data.Monoid                 ((<>))
 import           Data.Proxy
 import qualified Data.Set                    as Set
@@ -51,57 +54,71 @@ instance DynamoScalar BS.ByteString where
   dType _ = D.B
 
 class DynamoEncodable a where
-  dEncode :: a -> AttributeValue
+  dEncode :: a -> Maybe AttributeValue
   dDecode :: Maybe AttributeValue -> Maybe a
+  -- | Law: must be total function for Scalar values;
+  dScalarEncode :: a -> AttributeValue
+  dScalarEncode = fromMaybe (error "dEncode return Null value") . dEncode
 
 instance DynamoEncodable Integer where
-  dEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
+  dEncode num = Just $ attributeValue & D.avN .~ (Just $ T.pack (show num))
   dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Int where
-  dEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
+  dEncode num = Just $ attributeValue & D.avN .~ (Just $ T.pack (show num))
   dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Double where
-  dEncode num = attributeValue & D.avN .~ (Just $ toShortest num)
+  dEncode num = Just $ attributeValue & D.avN .~ (Just $ toShortest num)
   dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Bool where
-  dEncode b = attributeValue & D.avBOOL .~ Just b
+  dEncode b = Just $ attributeValue & D.avBOOL .~ Just b
   dDecode (Just attr) = attr ^. D.avBOOL
   dDecode Nothing = Nothing
 instance DynamoEncodable T.Text where
-  dEncode "" = attributeValue -- Empty string is not supported
-  dEncode t = attributeValue & D.avS .~ Just t
-  dDecode (Just attr) = attr ^. D.avS
-  dDecode Nothing = Just ""
-instance DynamoEncodable BS.ByteString where
-  dEncode t = attributeValue & D.avB .~ Just t
+  dEncode "" = Just $ attributeValue & D.avNULL .~ Just True-- Empty string is not supported, use null
+  dEncode t = Just $ attributeValue & D.avS .~ Just t
+  dScalarEncode t = attributeValue & D.avS .~ Just t
+  dDecode (Just attr)
+    | Just True <- attr ^. D.avNULL = Just ""
+    | otherwise = attr ^. D.avS
   dDecode Nothing = Nothing
-  dDecode (Just attr) = attr ^. D.avB
+instance DynamoEncodable BS.ByteString where
+  dEncode "" = Just $ attributeValue & D.avNULL .~ Just True
+  dEncode t = Just $ attributeValue & D.avB .~ Just t
+  dScalarEncode t = attributeValue & D.avB .~ Just t
+  dDecode (Just attr)
+    | Just True <- attr ^. D.avNULL = Just ""
+    | otherwise = attr ^. D.avB
+  dDecode Nothing = Nothing
+
+-- | Maybe (Maybe a) will not work well; it will 'join' the result
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
-  dEncode Nothing = attributeValue -- ??? Should we set to NULL?
+  dEncode Nothing = Nothing
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
-  dDecode (Just attr) = Just <$> dDecode (Just attr) -- Fail on decoding error, otherwise wrap in Just
+  dDecode (Just attr) = Just <$> dDecode (Just attr)
 instance DynamoEncodable (Set.Set T.Text) where
-  dEncode dta = attributeValue & D.avSS .~ Set.toList dta
+  dEncode dta = Just $ attributeValue & D.avSS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avSS)
   dDecode Nothing = Nothing
 instance DynamoEncodable (Set.Set BS.ByteString) where
-  dEncode dta = attributeValue & D.avBS .~ Set.toList dta
+  dEncode dta = Just $ attributeValue & D.avBS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avBS)
   dDecode Nothing = Nothing
 instance DynamoEncodable (Set.Set Int) where
-  dEncode dta = attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
+  dEncode dta = Just $ attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
   dDecode Nothing = Nothing
   dDecode (Just attr) = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
+-- | DynamoDB cannot represent empty items; {key:Maybe a} will lose Nothings
 instance DynamoEncodable a => DynamoEncodable (HashMap T.Text a) where
-  dEncode dta = attributeValue & D.avM .~ fmap dEncode dta
+  dEncode dta = Just $ attributeValue & D.avM .~ HMap.mapMaybe dEncode dta
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avM)
   dDecode Nothing = Nothing
+-- | DynamoDB cannot represent empty items; [Maybe a] will lose Nothings
 instance DynamoEncodable a => DynamoEncodable [a] where
-  dEncode lst = attributeValue & D.avL .~ map dEncode lst
+  dEncode lst = Just $ attributeValue & D.avL .~ mapMaybe dEncode lst
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
   dDecode Nothing = Nothing
 
@@ -118,8 +135,8 @@ gdEncode a =
 
     gdEncodeRec :: All DynamoEncodable xs => ConstructorInfo xs -> NP I xs -> K [(T.Text, AttributeValue)] xs
     gdEncodeRec (Record _ ns) xs =
-        K $ hcollapse
-          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K (T.pack name, dEncode val)) ns xs
+        K $ catMaybes $ hcollapse
+          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K ((T.pack name,) <$> dEncode val)) ns xs
     gdEncodeRec _ _ = error "Cannot serialize non-record types."
 
     palldynamo :: Proxy (All DynamoEncodable)
@@ -199,10 +216,10 @@ rangeOper (RangeBetween _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND 
 rangeOper (RangeBeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
 
 rangeData :: DynamoScalar a => RangeOper a -> [(T.Text, AttributeValue)]
-rangeData (RangeEquals a) = [(rangeKey, dEncode a)]
-rangeData (RangeLessThan a) = [(rangeKey, dEncode a)]
-rangeData (RangeLessThanE a) = [(rangeKey, dEncode a)]
-rangeData (RangeGreaterThan a) = [(rangeKey, dEncode a)]
-rangeData (RangeGreaterThanE a) = [(rangeKey, dEncode a)]
-rangeData (RangeBetween s e) = [(rangeStart, dEncode s), (rangeEnd, dEncode e)]
-rangeData (RangeBeginsWith a) = [(rangeKey, dEncode a)]
+rangeData (RangeEquals a) = [(rangeKey, dScalarEncode a)]
+rangeData (RangeLessThan a) = [(rangeKey, dScalarEncode a)]
+rangeData (RangeLessThanE a) = [(rangeKey, dScalarEncode a)]
+rangeData (RangeGreaterThan a) = [(rangeKey, dScalarEncode a)]
+rangeData (RangeGreaterThanE a) = [(rangeKey, dScalarEncode a)]
+rangeData (RangeBetween s e) = [(rangeStart, dScalarEncode s), (rangeEnd, dScalarEncode e)]
+rangeData (RangeBeginsWith a) = [(rangeKey, dScalarEncode a)]

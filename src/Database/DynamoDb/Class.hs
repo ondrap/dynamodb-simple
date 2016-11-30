@@ -19,11 +19,14 @@ module Database.DynamoDb.Class (
     DynamoCollection(..)
   , DynamoTable(..)
   , DynamoIndex(..)
-  , queryKey, queryKeyRange
+  , dQueryKey, dQueryKeyRange
   , NoRange, WithRange
   , IsTable, IsIndex
   , gdDecode
   , translateFieldName
+  , PrimaryKey
+  , RecordOK
+  , ItemOper
 ) where
 
 import           Control.Lens                     ((.~))
@@ -79,9 +82,9 @@ class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoTable a r 
   tableName = gdConstrName
 
   -- | Serialize data, put it into the database
-  putItem :: a -> D.PutItem
-  default putItem :: (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a)) => a -> D.PutItem
-  putItem = defaultPutItem
+  dPutItem :: a -> D.PutItem
+  default dPutItem :: (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a)) => a -> D.PutItem
+  dPutItem = defaultPutItem
 
   -- |
   createTable :: Proxy a -> ProvisionedThroughput -> D.CreateTable
@@ -93,13 +96,13 @@ class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoTable a r 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
 
-  deleteItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
+  dDeleteItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
       => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-  deleteItem = iDeleteItem (Proxy :: Proxy r)
+  dDeleteItem = iDeleteItem (Proxy :: Proxy r)
 
-  getItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
+  dGetItem :: (ItemOper a r, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
       => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
-  getItem = iGetItem (Proxy :: Proxy r)
+  dGetItem = iGetItem (Proxy :: Proxy r)
 
 -- | Dispatch class for NoRange/WithRange deleteItem
 class ItemOper a r where
@@ -110,16 +113,16 @@ class ItemOper a r where
 
 instance ItemOper a NoRange where
   iDeleteItem _ p key =
-      D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
+      D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
   iGetItem _ p key =
-      D.getItem (tableName p) & D.giKey .~ HMap.singleton (fst $ gdHashField p) (dEncode key)
+      D.getItem (tableName p) & D.giKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
 instance ItemOper a WithRange where
   iDeleteItem _ p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
     where
-      plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
+      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
   iGetItem _ p (key, range) = D.getItem (tableName p) & D.giKey .~ HMap.fromList plist
     where
-      plist = [(fst $ gdHashField p, dEncode key), (fst $ gdRangeField p, dEncode range)]
+      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
 
 
 -- | Dispatch class for NoRange/WithRange createTable
@@ -138,32 +141,32 @@ class DynamoCollection a r t => TableQuery a r t where
   qTableName :: Proxy a -> T.Text
   qIndexName :: Proxy a -> Maybe T.Text
   -- | Create a query only by hash key
-  queryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
-  queryKey = defaultQueryKey
+  dQueryKey :: (Code a ~ '[ key ': rest ], DynamoScalar key) => Proxy a -> key -> D.Query
+  dQueryKey = defaultQueryKey
   -- | Create a query using both hash key and operation on range key
   -- On tables without range key, this degrades to queryKey
-  queryKeyRange ::
+  dQueryKeyRange ::
         (TableQuery a r t, Code a ~ '[ key ': hash ': rest ], RecordOK (Code a) r)
       => Proxy a -> QueryRange (Code a) r -> D.Query
 
 instance (DynamoTable a NoRange IsTable, Code a ~ '[ xs ]) => TableQuery a NoRange IsTable where
   type QueryRange ('[ key ': rest ]) NoRange  = key
-  queryKeyRange = defaultQueryKey
+  dQueryKeyRange = defaultQueryKey
   qTableName = tableName
   qIndexName _ = Nothing
 instance  (DynamoTable a WithRange IsTable, Code a ~ '[ xs ]) => TableQuery a WithRange IsTable where
   type QueryRange ('[ key ': range ': rest ] ) WithRange  = (key, RangeOper range)
-  queryKeyRange = defaultQueryKeyRange
+  dQueryKeyRange = defaultQueryKeyRange
   qTableName = tableName
   qIndexName _ = Nothing
 instance (DynamoIndex a parent NoRange IsIndex, DynamoTable parent r1 t1, DynamoCollection a NoRange IsIndex, Code a ~ '[ xs ]) => TableQuery a NoRange IsIndex where
   type QueryRange ('[ key ': rest ]) NoRange  = key
-  queryKeyRange = defaultQueryKey
+  dQueryKeyRange = defaultQueryKey
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
 instance  (DynamoIndex a parent WithRange IsIndex, DynamoTable parent r1 t1, DynamoCollection a WithRange IsIndex, Code a ~ '[ xs ]) => TableQuery a WithRange IsIndex where
   type QueryRange ('[ key ': range ': rest ] ) WithRange  = (key, RangeOper range)
-  queryKeyRange = defaultQueryKeyRange
+  dQueryKeyRange = defaultQueryKeyRange
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
 
@@ -288,7 +291,7 @@ defaultQueryKey :: (TableQuery a r t, Code a ~ '[ key ': rest ], DynamoCollectio
 defaultQueryKey p key =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
                          & D.qExpressionAttributeNames .~ HMap.singleton "K" hashname
-                         & D.qExpressionAttributeValues .~ HMap.singleton "key" (dEncode key)
+                         & D.qExpressionAttributeValues .~ HMap.singleton "key" (dScalarEncode key)
                          & D.qIndexName .~ qIndexName p
   where
     (hashname, _) = gdHashField p
@@ -305,7 +308,7 @@ defaultQueryKeyRange p (key, range) =
     rangeSubst = "R"
     condExpression = "#K = :key AND <> " <> rangeOper range rangeSubst
     attrnames = HMap.fromList [("K", hashname), (rangeSubst, rangename)]
-    attrvals = HMap.fromList $ rangeData range ++ [("key", dEncode key)]
+    attrvals = HMap.fromList $ rangeData range ++ [("key", dScalarEncode key)]
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
 

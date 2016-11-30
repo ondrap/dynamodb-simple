@@ -12,7 +12,7 @@ module Database.DynamoDb.Filter (
     , (&&.), (||.)
     , (==.), (>=.), (>.), (<=.), (<.)
     , (<.>)
-    , attrExists, attrMissing, beginsWith, contains, valIn, between
+    , attrExists, attrMissing, beginsWith, contains, tcontains, valIn, between
     , size
     , Column(Column)
     , TypColumn
@@ -26,6 +26,7 @@ import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
 import           Data.Monoid                ((<>))
 import           Data.Proxy
+import qualified Data.Set                   as Set
 import qualified Data.Text                  as T
 import qualified Network.AWS.DynamoDB.Types as D
 
@@ -140,10 +141,10 @@ dumpCondition fcondition = evalSupply (go fcondition) names
       return (expr, HMap.singleton ident colname, HMap.singleton ident val)
 
 between :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
-between col a b = Between (nameGen col) (dEncode a) (dEncode b)
+between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
 valIn :: (InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> [typ] -> FilterCondition tbl
-valIn col lst = In (nameGen col) (map dEncode lst)
+valIn col lst = In (nameGen col) (map dScalarEncode lst)
 
 attrExists :: (InCollection col tbl, IsColumn ct) => Column typ ct col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
@@ -152,10 +153,15 @@ attrMissing :: (InCollection col tbl, IsColumn ct) => Column typ ct col -> Filte
 attrMissing col = AttrMissing (nameGen col)
 
 beginsWith :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
-beginsWith col txt = BeginsWith (nameGen col) (dEncode txt)
+beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
 
-contains :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
-contains col txt = Contains (nameGen col) (dEncode txt)
+-- | Version of contains on text-like attributes
+tcontains :: (InCollection col tbl, IsText typ, IsColumn ct) => Column typ ct col -> T.Text -> FilterCondition tbl
+tcontains col txt = Contains (nameGen col) (dScalarEncode txt)
+
+-- | Version of contains on set-like attributes
+contains :: (InCollection col tbl, IsColumn ct, DynamoEncodable a) => Column (Set.Set a) ct col -> a -> FilterCondition tbl
+contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int TypSize col
 size Column = Size (columnName (Proxy :: Proxy col))
@@ -163,7 +169,7 @@ size (Combined txt) = Size txt
 size (Size _) = error "This cannot happen - size"
 
 dcomp :: (InCollection col tbl, DynamoEncodable typ) => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
-dcomp op col val = Comparison (nameGen col) op (dEncode val)
+dcomp op col val = Comparison (nameGen col) op (dScalarEncode val)
 
 (&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (&&.) = And
