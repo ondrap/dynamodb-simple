@@ -17,6 +17,7 @@ module Database.DynamoDb (
   , deleteItemCond
   , queryKey
   , queryKeyCond
+  , scan
 ) where
 
 import           Control.Lens                        (Iso', at, iso, view, (.~),
@@ -24,9 +25,10 @@ import           Control.Lens                        (Iso', at, iso, view, (.~),
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
 import           Data.Bool                           (bool)
-import           Data.Conduit                        (Source, (=$=))
+import           Data.Conduit                        (Source, (=$=), Conduit)
 import qualified Data.Conduit.List                   as CL
 import           Data.Function                       ((&))
+import           Data.HashMap.Strict                 (HashMap)
 import           Data.List.NonEmpty
 import           Data.Monoid                         ((<>))
 import           Data.Proxy
@@ -38,6 +40,7 @@ import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
 import qualified Network.AWS.DynamoDB.Query          as D
 import qualified Network.AWS.DynamoDB.Types          as D
+import qualified Network.AWS.DynamoDB.Scan         as D
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
@@ -114,17 +117,22 @@ deleteItemCond p pkey cond =
                                & D.diConditionExpression .~ Just expr
   in void (send cmd)
 
--- | Query item in a database using range key; throw exception if an item cannot be decoded
-queryKey :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
-  => Consistency -> hash -> Maybe (RangeOper range) -> Source m a
-queryKey consistency key range = do
-    let query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
-    paginate query =$= CL.mapFoldable (view D.qrsItems) =$= CL.mapM decoder
+-- | Helper function to decode data from the conduit
+rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t, All2 DynamoEncodable (Code a))
+    => (i -> [HashMap T.Text D.AttributeValue]) -> Conduit i m a
+rsDecode trans = CL.mapFoldable trans =$= CL.mapM decoder
   where
     decoder item =
       case gdDecode item of
         Just res -> return res
         Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
+
+-- | Query item in a database using range key; throw exception if an item cannot be decoded
+queryKey :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
+  => Consistency -> hash -> Maybe (RangeOper range) -> Source m a
+queryKey consistency key range = do
+    let query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
+    paginate query =$= rsDecode (view D.qrsItems)
 
 -- | Query item in a database, uses filter condition to further filter items server side
 queryKeyCond :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
@@ -135,9 +143,10 @@ queryKeyCond consistency key range cond = do
                                                        & D.qExpressionAttributeNames %~ (<> attnames)
                                                        & bool (D.qExpressionAttributeValues %~ (<> attvals)) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
                                                        & D.qFilterExpression .~ Just expr
-    paginate query =$= CL.mapFoldable (view D.qrsItems) =$= CL.mapM decoder
-  where
-    decoder item =
-      case gdDecode item of
-        Just res -> return res
-        Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
+    paginate query =$= rsDecode (view D.qrsItems)
+
+scan :: forall a m hash range rest r t.
+    (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t) => Consistency -> Source m a
+scan consistency = do
+    let cmd = dScan (Proxy :: Proxy a) & D.sConsistentRead .consistencyL .~ consistency
+    paginate cmd =$= rsDecode (view D.srsItems)

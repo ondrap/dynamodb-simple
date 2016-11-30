@@ -20,6 +20,7 @@ module Database.DynamoDb.Class (
   , DynamoTable(..)
   , DynamoIndex(..)
   , dQueryKey
+  , dScan
   , NoRange, WithRange
   , IsTable, IsIndex
   , gdDecode
@@ -28,6 +29,7 @@ module Database.DynamoDb.Class (
   , RecordOK
   , ItemOper
   , TableQuery
+  , TableScan
 ) where
 
 import           Control.Lens                     ((.~))
@@ -45,6 +47,7 @@ import qualified Network.AWS.DynamoDB.DeleteTable  as D
 import qualified Network.AWS.DynamoDB.Query  as D
 import qualified Network.AWS.DynamoDB.GetItem  as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
+import qualified Network.AWS.DynamoDB.Scan      as D
 import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput, keySchemaElement,
                                                    globalSecondaryIndex)
 import qualified Network.AWS.DynamoDB.Types       as D
@@ -149,7 +152,6 @@ class (RecordOK (Code a) WithRange, DynamoCollection a WithRange t) => TableQuer
   -- On tables without range key, this degrades to queryKey
   dQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ], RecordOK (Code a) WithRange)
       => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
-
 instance  (DynamoTable a WithRange IsTable, Code a ~ '[ xs ]) => TableQuery a IsTable where
   dQueryKey = defaultQueryKey
   qTableName = tableName
@@ -158,6 +160,20 @@ instance  (RecordOK (Code a) WithRange, DynamoIndex a parent WithRange IsIndex, 
   dQueryKey = defaultQueryKey
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
+
+class (DynamoCollection a r t, All2 DynamoEncodable (Code a)) => TableScan a r t where
+  -- | Return table name and index name
+  qsTableName :: Proxy a -> T.Text
+  qsIndexName :: Proxy a -> Maybe T.Text
+  dScan :: Proxy a -> D.Scan
+instance DynamoTable a r IsTable => TableScan a r IsTable where
+  qsTableName = tableName
+  qsIndexName _ = Nothing
+  dScan = defaultScan
+instance (DynamoIndex a parent r IsIndex, DynamoTable parent r1 t1, All2 DynamoEncodable (Code a)) => TableScan a r IsIndex where
+  qsTableName _ = tableName (Proxy :: Proxy parent)
+  qsIndexName = Just . indexName
+  dScan = defaultScan
 
 -- | Parameter type for queryKeyRange
 type family PrimaryKey (a :: [[k]]) r :: *
@@ -331,3 +347,6 @@ defaultCreateIndexRange p thr =
          | otherwise = D.projection & D.pProjectionType .~ Just D.KeysOnly
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (toList parentKey ++ [hashname])) $ toList $ gdFieldNames (Proxy :: Proxy a)
+
+defaultScan :: (TableScan a r t) => Proxy a -> D.Scan
+defaultScan p = D.scan (qsTableName p) & D.sIndexName .~ qsIndexName p
