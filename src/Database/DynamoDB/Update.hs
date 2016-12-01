@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Database.DynamoDb.Update (
+module Database.DynamoDB.Update (
     Action
   , (+=.), (-=.), (=.)
   , setIfNotExists
@@ -21,8 +21,8 @@ import qualified Data.Set                   as Set
 import qualified Data.Text                  as T
 import           Network.AWS.DynamoDB.Types (AttributeValue)
 
-import           Database.DynamoDb.Internal
-import           Database.DynamoDb.Types
+import           Database.DynamoDB.Internal
+import           Database.DynamoDB.Types
 
 data ActionValue =
     ValAttr AttributeValue

@@ -20,10 +20,10 @@ source-repository head
   location: https://github.com/ondrap/dynamodb-simple.git
 
 library
-  exposed-modules:     Database.DynamoDb, Database.DynamoDb.Types,
-                       Database.DynamoDb.Filter, Database.DynamoDb.TH,
-                       Database.DynamoDb.Update
-  other-modules:       Database.DynamoDb.Class, Database.DynamoDb.Migration
+  exposed-modules:     Database.DynamoDB, Database.DynamoDB.Types,
+                       Database.DynamoDB.Filter, Database.DynamoDB.TH,
+                       Database.DynamoDB.Update
+  other-modules:       Database.DynamoDB.Class, Database.DynamoDB.Migration
   build-depends:       base >=4.8 && <5, amazonka-dynamodb, generics-sop,
                        unordered-containers, text, lens, double-conversion,
                        semigroups, bytestring, containers, monad-supply,

@@ -18,7 +18,7 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 #endif
 
-module Database.DynamoDb.Class (
+module Database.DynamoDB.Class (
     DynamoCollection(..)
   , DynamoTable(..)
   , DynamoIndex(..)
@@ -55,8 +55,8 @@ import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput,
 import qualified Network.AWS.DynamoDB.Types       as D
 
 
-import           Database.DynamoDb.Internal       (rangeOper, rangeData)
-import           Database.DynamoDb.Types
+import           Database.DynamoDB.Internal       (rangeOper, rangeData)
+import           Database.DynamoDB.Types
 
 
 -- | Data collection type - with hash key or with hash+sort key

@@ -9,7 +9,7 @@
 {-# LANGUAGE ViewPatterns        #-}
 
 -- |
-module Database.DynamoDb.Types (
+module Database.DynamoDB.Types (
     -- * Exceptions
     DynamoException(..)
     -- * Marshalling

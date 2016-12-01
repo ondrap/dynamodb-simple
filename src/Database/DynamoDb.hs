@@ -16,48 +16,10 @@
 --
 -- Type-safe library for accessing DynamoDB database.
 --
--- This library is operated in the following way:
---
--- * Create instances for your custom types using "Database.DynamoDb.Types"
--- * Create ordinary datatypes with records
--- * Use functions from "Database.DynamoDb.TH" to derive appropriate instances
--- * Optionally call generated migration function to automatically create
---   tables and indices
--- * Call functions from this module to access the database
---
--- The library does its best to ensure that only correct DynamoDB
--- operations are allowed. There are some limitations of DynamoDB
--- regarding access to empty values, but the library takes care
--- of this reasonably well.
---
--- Example of use
---
--- You may need to set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment
--- variables.
---
--- @
--- import qualified GHC.Generics as GHC
--- data Test = Test {
---     category :: T.Text
---   , messageid :: T.Text
---   , subject :: T.Text
--- } deriving (Show, GHC.Generic)
--- $(mkTableDefs "migrate" (''Test, True) [])
---
--- main = do
---    lgr <- newLogger Info stdout
---    env <- newEnv NorthVirginia Discover
---    -- Override, use DynamoDb on localhost
---    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
---    let newenv = env & configure dynamo
---                     & set envLogger lgr
---    runResourceT $ runAWS newenv $ do
---        migrate -- Create tables, indexes
---        putItem (Test "news" "1-2-3-4" "New subject")
---        item <- getItem Eventually ("news", "1-2-3-4")
---        liftIO $ print (item :: Maybe Test)
--- @
-module Database.DynamoDb (
+module Database.DynamoDB (
+    -- * Introduction
+    -- $intro
+
     -- * Data types
     DynamoException(..)
   , Consistency(..)
@@ -109,11 +71,11 @@ import qualified Network.AWS.DynamoDB.Types          as D
 import qualified Network.AWS.DynamoDB.UpdateItem     as D
 import           Network.AWS.Pager                   (AWSPager (..))
 
-import           Database.DynamoDb.Class
-import           Database.DynamoDb.Filter
-import           Database.DynamoDb.Internal
-import           Database.DynamoDb.Types
-import           Database.DynamoDb.Update
+import           Database.DynamoDB.Class
+import           Database.DynamoDB.Filter
+import           Database.DynamoDB.Internal
+import           Database.DynamoDB.Types
+import           Database.DynamoDB.Update
 
 
 -- | Parameter for queries involving read consistency settings.
@@ -331,3 +293,47 @@ infixl 8 <!>
     => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
 (<!:>) (Column (a1 :| rest)) key = Column (a1 :| (rest ++ [IntraName (toText key)]))
 infixl 8 <!:>
+
+-- $intro
+--
+-- This library is operated in the following way:
+--
+-- * Create instances for your custom types using "Database.DynamoDB.Types"
+-- * Create ordinary datatypes with records
+-- * Use functions from "Database.DynamoDB.TH" to derive appropriate instances
+-- * Optionally call generated migration function to automatically create
+--   tables and indices
+-- * Call functions from this module to access the database
+--
+-- The library does its best to ensure that only correct DynamoDB
+-- operations are allowed. There are some limitations of DynamoDB
+-- regarding access to empty values, but the library takes care
+-- of this reasonably well.
+--
+-- Example of use
+--
+-- You may need to set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment
+-- variables.
+--
+-- @
+-- import qualified GHC.Generics as GHC
+-- data Test = Test {
+--     category :: T.Text
+--   , messageid :: T.Text
+--   , subject :: T.Text
+-- } deriving (Show, GHC.Generic)
+-- $(mkTableDefs "migrate" (''Test, True) [])
+--
+-- main = do
+--    lgr <- newLogger Info stdout
+--    env <- newEnv NorthVirginia Discover
+--    -- Override, use DynamoDD on localhost
+--    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+--    let newenv = env & configure dynamo
+--                     & set envLogger lgr
+--    runResourceT $ runAWS newenv $ do
+--        migrate (provisionedThroughput 5 5) [] -- Create tables, indexes
+--        putItem (Test "news" "1-2-3-4" "New subject")
+--        item <- getItem Eventually ("news", "1-2-3-4")
+--        liftIO $ print (item :: Maybe Test)
+-- @

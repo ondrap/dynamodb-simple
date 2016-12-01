@@ -8,7 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TupleSections         #-}
 
-module Database.DynamoDb.Internal where
+module Database.DynamoDB.Internal where
 
 import           Control.Monad.Supply       (Supply, evalSupply, supply)
 import           Data.Foldable              (foldlM)
@@ -21,7 +21,7 @@ import qualified Data.Text                  as T
 import           Network.AWS.DynamoDB.Types (AttributeValue)
 import qualified Network.AWS.DynamoDB.Types as D
 
-import           Database.DynamoDb.Types
+import           Database.DynamoDB.Types
 
 data ColumnType = TypColumn | TypSize
 -- | Representation of a column for filter queries

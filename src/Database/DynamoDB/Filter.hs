@@ -9,7 +9,7 @@
 -- Example as used in nested structure for scan:
 --
 -- > scanCond Eventually (colCtvrty <!:> "a" <.> colInTreti <.> colInnPrvni ==. "x")
-module Database.DynamoDb.Filter (
+module Database.DynamoDB.Filter (
       -- * Condition datatype
       FilterCondition(Not)
       -- * Logical operators
@@ -28,8 +28,8 @@ import qualified Data.Set                   as Set
 import qualified Data.Text                  as T
 import qualified Network.AWS.DynamoDB.Types as D
 
-import           Database.DynamoDb.Internal
-import           Database.DynamoDb.Types
+import           Database.DynamoDB.Internal
+import           Database.DynamoDB.Types
 
 -- | Numeric/string range comparison
 between :: (Ord typ, InCollection col tbl 'FullPath, DynamoScalar typ)

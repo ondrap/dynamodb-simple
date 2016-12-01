@@ -3,7 +3,7 @@
 -- | Template Haskell macros to automatically derive instances, create column datatypes
 --  and create migrations functions.
 --
-module Database.DynamoDb.TH (
+module Database.DynamoDB.TH (
     -- * Derive instances for table and indexes
     -- $table
 
@@ -32,10 +32,10 @@ import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
 import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput)
 import           Network.AWS                     (MonadAWS)
 
-import           Database.DynamoDb.Class
-import           Database.DynamoDb.Migration     (runMigration)
-import           Database.DynamoDb.Types
-import           Database.DynamoDb.Internal
+import           Database.DynamoDB.Class
+import           Database.DynamoDB.Migration     (runMigration)
+import           Database.DynamoDB.Types
+import           Database.DynamoDB.Internal
 
 -- | Create instances, datatypes for table, fields and instances.
 --

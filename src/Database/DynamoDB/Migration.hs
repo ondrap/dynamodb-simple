@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE TypeFamilies       #-}
 
-module Database.DynamoDb.Migration (
+module Database.DynamoDB.Migration (
   runMigration
 ) where
 
@@ -36,8 +36,8 @@ import qualified Network.AWS.DynamoDB.DescribeTable as D
 import qualified Network.AWS.DynamoDB.Types         as D
 import qualified Network.AWS.DynamoDB.UpdateTable   as D
 
-import           Database.DynamoDb.Class
-import           Database.DynamoDb.Types
+import           Database.DynamoDB.Class
+import           Database.DynamoDB.Types
 
 getTableDescription :: MonadAWS m => T.Text -> m D.TableDescription
 getTableDescription tblname = do
