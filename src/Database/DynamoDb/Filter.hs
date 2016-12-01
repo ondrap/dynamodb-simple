@@ -6,6 +6,8 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TupleSections         #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE KindSignatures        #-}
 
 module Database.DynamoDb.Filter (
       FilterCondition(Not)
@@ -15,11 +17,11 @@ module Database.DynamoDb.Filter (
     , attrExists, attrMissing, beginsWith, contains, tcontains, valIn, between
     , size
     , Column(Column)
-    , TypColumn
+    , ColumnType(TypColumn)
     , dumpCondition
     , InCollection
     , ColumnInfo(..)
-    , InnerQuery, OuterQuery
+    , QueryType(..)
 ) where
 
 import           Control.Lens               ((.~), (^.))
@@ -36,37 +38,34 @@ import qualified Network.AWS.DynamoDB.Types as D
 
 import           Database.DynamoDb.Types
 
-data TypColumn
-data TypSize
-data TypCombined
+data ColumnType = TypColumn | TypSize | TypCombined
 -- | Representation of a column for filter queries
 -- typ - datatype of column (Int, Text..)
 -- coltype - TypColumn or TypSize (result of size(column))
 -- col - instance of ColumnInfo, uniquely identify a column
-data Column typ coltype col where
-    Column :: Column typ TypColumn col
-    Size :: [T.Text] -> Column Int TypSize col
-    Combined :: [T.Text] -> Column typ TypCombined col
+data Column typ (coltype :: ColumnType) col where
+    Column :: Column typ 'TypColumn col
+    Size :: [T.Text] -> Column Int 'TypSize col
+    Combined :: [T.Text] -> Column typ 'TypCombined col
 
 (<.>) :: forall typ col1 typ2 col2 ct2.
-        (InCollection col2 typ InnerQuery, ColumnInfo col1, ColumnInfo col2, IsColumn ct2)
-      => Column typ TypColumn col1 -> Column typ2 ct2 col2 -> Column typ2 TypCombined col1
+        (InCollection col2 typ 'InnerQuery, ColumnInfo col1, ColumnInfo col2, IsColumn ct2)
+      => Column typ 'TypColumn col1 -> Column typ2 ct2 col2 -> Column typ2 'TypCombined col1
 (<.>) Column Column = Combined [columnName (Proxy :: Proxy col1), columnName (Proxy :: Proxy col2)]
 (<.>) Column (Combined other) = Combined (columnName (Proxy :: Proxy col1) : other)
 (<.>) Column (Size _) = error "This cannot happen <.>"
 -- We need to associate from the right
 infixr 7 <.>
 
-class IsColumn a
-instance IsColumn TypColumn
-instance IsColumn TypCombined
+class IsColumn (a :: ColumnType)
+instance IsColumn 'TypColumn
+instance IsColumn 'TypCombined
 
 -- Type of query for InCollection (we cannot query on primary key)
-data InnerQuery
-data OuterQuery
+data QueryType = InnerQuery | OuterQuery
 
 -- | Signifies that the column is present in the table/index
-class ColumnInfo col => InCollection col tbl query
+class ColumnInfo col => InCollection col tbl (query :: QueryType)
 
 -- | Class to get a column name from a Type specifying a column
 class ColumnInfo a where
@@ -85,7 +84,7 @@ nameGen (Combined lst) mkident = do
     return (T.intercalate "." slist, HMap.fromList (zip slist lst))
 
 -- |
-data FilterCondition t q =
+data FilterCondition t (q :: QueryType) =
       And (FilterCondition t q) (FilterCondition t q)
     | Or (FilterCondition t q) (FilterCondition t q)
     | Not (FilterCondition t q)
@@ -98,7 +97,7 @@ data FilterCondition t q =
     | In NameGen [D.AttributeValue]
 
 -- | Return filter expression, attribute name map and attribute value map
-dumpCondition :: FilterCondition t OuterQuery -> (T.Text, HashMap T.Text T.Text, HashMap T.Text D.AttributeValue)
+dumpCondition :: FilterCondition t 'OuterQuery -> (T.Text, HashMap T.Text T.Text, HashMap T.Text D.AttributeValue)
 dumpCondition fcondition = evalSupply (go fcondition) names
   where
     names = map (\i -> T.pack ("G" <> show i)) ([1..] :: [Int])
@@ -182,7 +181,7 @@ contains :: (InCollection col tbl q, IsColumn ct, DynamoEncodable a)
 contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | Size (i.e. number of bytes) of saved attribute
-size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int TypSize col
+size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int 'TypSize col
 size Column = Size [columnName (Proxy :: Proxy col)]
 size (Combined lst) = Size lst
 size (Size _) = error "This cannot happen - size"

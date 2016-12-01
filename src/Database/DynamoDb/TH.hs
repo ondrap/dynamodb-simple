@@ -95,13 +95,13 @@ genBaseCollection coll collrange mparent = do
     case mparent of
       Nothing ->
         lift [d|
-            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) IsTable
-            instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) IsTable
+            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
+            instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
              |] >>= tell
       Just parent ->
         lift [d|
-            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) IsIndex
-            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) IsIndex
+            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsIndex
+            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) 'IsIndex
               |] >>= tell
 
     tblFieldNames <- getFieldNames coll
@@ -109,11 +109,11 @@ genBaseCollection coll collrange mparent = do
     let constrNames = mkConstrNames tblFieldNames
     forM_ (drop (bool 1 2 collrange) constrNames) $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) OuterQuery
+        instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) 'OuterQuery
         |] >>= tell
   where
-    mrange True = ''WithRange
-    mrange False = ''NoRange
+    mrange True = 'WithRange
+    mrange False = 'NoRange
 
 
 -- | Reify name and return list of record fields with type
@@ -145,7 +145,7 @@ buildColData fieldlist = do
             instance ColumnInfo $(pure (ConT constr)) where
                 columnName _ = T.pack fieldname
           |] >>= tell
-        say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT ''TypColumn)) (ConT constr))
+        say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT 'TypColumn)) (ConT constr))
         say $ ValD (VarP pat) (NormalB (ConE 'Column)) []
   where
     toPatName = ("col" <> ) . over (ix 0) toUpper
@@ -188,7 +188,7 @@ deriveEncodable table = do
     let constrs = mkConstrNames tblFieldNames
     forM_ constrs $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT table)) InnerQuery
+        instance InCollection $(pure (ConT constr)) $(pure (ConT table)) 'InnerQuery
         |] >>= tell
 
 -- | Creates top-leval variable as a call to a migration function with partially applied createIndex
