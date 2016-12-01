@@ -8,7 +8,7 @@ module Database.DynamoDb.Filter (
       FilterCondition(Not)
     , (&&.), (||.)
     , (==.), (/=.), (>=.), (>.), (<=.), (<.)
-    , (<.>)
+    , (<.>), (<!>), (<!:>)
     , attrExists, attrMissing, beginsWith, contains, setContains, valIn, between
     , size
     , Column
@@ -16,8 +16,9 @@ module Database.DynamoDb.Filter (
 
 import           Control.Lens               ((.~), (^.))
 import           Data.Function              ((&))
+import           Data.HashMap.Strict        (HashMap)
+import           Data.List.NonEmpty         (NonEmpty (..))
 import           Data.Maybe                 (fromMaybe)
-import           Data.Proxy
 import qualified Data.Set                   as Set
 import qualified Data.Text                  as T
 import qualified Network.AWS.DynamoDB.Types as D
@@ -25,14 +26,21 @@ import qualified Network.AWS.DynamoDB.Types as D
 import           Database.DynamoDb.Internal
 import           Database.DynamoDb.Types
 
-(<.>) :: forall typ col1 typ2 col2 ct2.
-        (InCollection col2 typ 'InnerQuery, ColumnInfo col1, ColumnInfo col2, IsColumn ct2)
-      => Column typ 'TypColumn col1 -> Column typ2 ct2 col2 -> Column typ2 'TypCombined col1
-(<.>) Column Column = Combined [columnName (Proxy :: Proxy col1), columnName (Proxy :: Proxy col2)]
-(<.>) Column (Combined other) = Combined (columnName (Proxy :: Proxy col1) : other)
-(<.>) Column (Size _) = error "This cannot happen <.>"
+(<.>) :: forall typ col1 typ2 col2.
+        (InCollection col2 typ 'InnerQuery, ColumnInfo col1, ColumnInfo col2)
+      => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
+(<.>) (Column (a1 :| rest1)) (Column (a2 :| rest2)) = Column (a1 :| rest1 ++ (a2 : rest2))
 -- We need to associate from the right
-infixr 7 <.>
+infixl 7 <.>
+
+(<!>) :: forall typ col. ColumnInfo col => Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
+(<!>) (Column (a1 :| rest)) num = Column (a1 :| (rest ++ [IntraIndex num]))
+infixl 8 <!>
+
+(<!:>) :: forall typ col key. (ColumnInfo col, IsText key)
+    => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
+(<!:>) (Column (a1 :| rest)) key = Column (a1 :| (rest ++ [IntraName (toText key)]))
+infixl 8 <!:>
 
 between :: (Ord typ, InCollection col tbl 'OuterQuery, DynamoScalar typ)
   => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
@@ -42,31 +50,29 @@ valIn :: (InCollection col tbl 'OuterQuery, DynamoScalar typ)
   => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dScalarEncode lst)
 
-attrExists :: (InCollection col tbl 'OuterQuery, IsColumn ct) => Column typ ct col -> FilterCondition tbl
+attrExists :: (InCollection col tbl 'OuterQuery) => Column typ 'TypColumn col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
 
-attrMissing :: (InCollection col tbl 'OuterQuery, IsColumn ct) => Column typ ct col -> FilterCondition tbl
+attrMissing :: (InCollection col tbl 'OuterQuery) => Column typ 'TypColumn col -> FilterCondition tbl
 attrMissing col = AttrMissing (nameGen col)
 
-beginsWith :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
-  => Column typ ct col -> T.Text -> FilterCondition tbl
+beginsWith :: (InCollection col tbl 'OuterQuery, IsText typ)
+  => Column typ 'TypColumn col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for rext-like attributes
-contains :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
-  => Column typ ct col -> T.Text -> FilterCondition tbl
+contains :: (InCollection col tbl 'OuterQuery, IsText typ)
+  => Column typ 'TypColumn col -> T.Text -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for sets
-setContains :: (InCollection col tbl 'OuterQuery, IsColumn ct, DynamoScalar a)
-  => Column (Set.Set a) ct col -> a -> FilterCondition tbl
+setContains :: (InCollection col tbl 'OuterQuery, DynamoScalar a)
+  => Column (Set.Set a) 'TypColumn col -> a -> FilterCondition tbl
 setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | Size (i.e. number of bytes) of saved attribute
-size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int 'TypSize col
-size Column = Size [columnName (Proxy :: Proxy col)]
-size (Combined lst) = Size lst
-size (Size _) = error "This cannot happen - size"
+size :: forall typ col. ColumnInfo col => Column typ 'TypColumn col -> Column Int 'TypSize col
+size (Column lst) = Size lst
 
 dcomp :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
   => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl

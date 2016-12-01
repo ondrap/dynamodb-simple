@@ -11,8 +11,10 @@
 module Database.DynamoDb.Internal where
 
 import           Control.Monad.Supply       (Supply, evalSupply, supply)
+import           Data.Foldable              (foldlM)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
+import           Data.List.NonEmpty         (NonEmpty(..))
 import           Data.Monoid                ((<>))
 import           Data.Proxy
 import qualified Data.Text                  as T
@@ -21,19 +23,21 @@ import qualified Network.AWS.DynamoDB.Types as D
 
 import           Database.DynamoDb.Types
 
-data ColumnType = TypColumn | TypSize | TypCombined
+data ColumnType = TypColumn | TypSize
 -- | Representation of a column for filter queries
 -- typ - datatype of column (Int, Text..)
 -- coltype - TypColumn or TypSize (result of size(column))
 -- col - instance of ColumnInfo, uniquely identify a column
 data Column typ (coltype :: ColumnType) col where
-    Column :: Column typ 'TypColumn col
-    Size :: [T.Text] -> Column Int 'TypSize col
-    Combined :: [T.Text] -> Column typ 'TypCombined col
+    Column :: NonEmpty IntraColName -> Column typ 'TypColumn col
+    Size :: NonEmpty IntraColName -> Column Int 'TypSize col
 
-class IsColumn (a :: ColumnType)
-instance IsColumn 'TypColumn
-instance IsColumn 'TypCombined
+-- | Smart constructor for Column datatype
+mkColumn :: forall typ col. ColumnInfo col => Column typ 'TypColumn col
+mkColumn = Column (IntraName (columnName (Proxy :: Proxy col)) :| [])
+
+-- | Internal representation of a part of path in a nested structure
+data IntraColName = IntraName T.Text | IntraIndex Int
 
 -- Type of query for InCollection (we cannot query on primary key)
 data QueryType = InnerQuery | OuterQuery
@@ -47,15 +51,21 @@ class ColumnInfo a where
 
 type NameGen = Supply T.Text T.Text -> Supply T.Text (T.Text, HashMap T.Text T.Text)
 nameGen :: forall typ ctyp col. ColumnInfo col => Column typ ctyp col -> NameGen
-nameGen Column mkident = do
-    subst <- mkident
-    return (subst, HMap.fromList [(subst, columnName (Proxy :: Proxy col))])
+nameGen (Column lst) mkident = nameGenPath mkident lst
 nameGen (Size lst) mkident = do
-    slist <- mapM (const mkident) lst
-    return ("size(" <> T.intercalate "." slist <> ")", HMap.fromList  (zip slist lst))
-nameGen (Combined lst) mkident = do
-    slist <- mapM (const mkident) lst
-    return (T.intercalate "." slist, HMap.fromList (zip slist lst))
+    (path, attrs) <- nameGenPath mkident lst
+    return ("size(" <> path <> ")", attrs)
+
+nameGenPath :: Supply T.Text T.Text -> NonEmpty IntraColName -> Supply T.Text (T.Text, HashMap T.Text T.Text)
+nameGenPath mkident = foldlM joinParts ("", HMap.empty)
+  where
+    joinParts ("", attrs) (IntraName nm) = do
+        ident <- mkident
+        return (ident, attrs <> HMap.singleton ident nm)
+    joinParts (expr, attrs) (IntraName nm) = do
+        ident <- mkident
+        return (expr <> "." <> ident, attrs <> HMap.singleton ident nm)
+    joinParts (expr, attrs) (IntraIndex idx) = return (expr <> "[" <> T.pack (show idx) <> "]", attrs)
 
 -- |
 data FilterCondition t =

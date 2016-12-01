@@ -150,7 +150,7 @@ buildColData fieldlist = do
                 columnName _ = T.pack fieldname
           |] >>= tell
         say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT 'TypColumn)) (ConT constr))
-        say $ ValD (VarP pat) (NormalB (ConE 'Column)) []
+        say $ ValD (VarP pat) (NormalB (VarE 'mkColumn)) []
   where
     toPatName = ("col" <> ) . over (ix 0) toUpper
 

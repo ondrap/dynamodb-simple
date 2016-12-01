@@ -13,11 +13,10 @@ module Database.DynamoDb.Types (
   , DynamoScalar(..)
   , DynamoException(..)
   , RangeOper(..)
-  , IsText, IsNumber
+  , IsText(..), IsNumber
   , gdEncode
   , gdDecode
   , translateFieldName
-  , dScalarEncode
 ) where
 
 import           Control.Exception           (Exception)
@@ -25,9 +24,10 @@ import           Control.Lens                ((.~), (^.))
 import qualified Data.ByteString             as BS
 import           Data.Double.Conversion.Text (toShortest)
 import           Data.Function               ((&))
+import           Data.Hashable               (Hashable)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
-import           Data.Maybe                  (catMaybes, mapMaybe, fromMaybe)
+import           Data.Maybe                  (catMaybes, mapMaybe)
 import           Data.Proxy
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
@@ -45,16 +45,21 @@ instance Exception DynamoException
 
 class DynamoEncodable a => DynamoScalar a where
   dType :: Proxy a -> ScalarAttributeType
+  dScalarEncode :: a -> AttributeValue
+instance DynamoScalar Integer where
+  dType _ = D.N
+  dScalarEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
 instance DynamoScalar Int where
   dType _ = D.N
+  dScalarEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
 instance DynamoScalar T.Text where
   dType _ = D.S
+  dScalarEncode "" = attributeValue & D.avNULL .~ Just True-- Empty string is not supported, use null
+  dScalarEncode t = attributeValue & D.avS .~ Just t
 instance DynamoScalar BS.ByteString where
   dType _ = D.B
-
--- | Type-restricted 'dEncode'
-dScalarEncode :: DynamoScalar a => a -> AttributeValue
-dScalarEncode = fromMaybe (error "dEncode return Null value; this cannot happen") . dEncode
+  dScalarEncode "" = attributeValue & D.avNULL .~ Just True
+  dScalarEncode t = attributeValue & D.avB .~ Just t
 
 -- | Helper pattern
 pattern EmptySet <- (Set.null -> True)
@@ -65,11 +70,11 @@ class DynamoEncodable a where
   dDecode :: Maybe AttributeValue -> Maybe a
 
 instance DynamoEncodable Integer where
-  dEncode num = Just $ attributeValue & D.avN .~ (Just $ T.pack (show num))
+  dEncode = Just . dScalarEncode
   dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Int where
-  dEncode num = Just $ attributeValue & D.avN .~ (Just $ T.pack (show num))
+  dEncode = Just . dScalarEncode
   dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Double where
@@ -81,15 +86,13 @@ instance DynamoEncodable Bool where
   dDecode (Just attr) = attr ^. D.avBOOL
   dDecode Nothing = Nothing
 instance DynamoEncodable T.Text where
-  dEncode "" = Just $ attributeValue & D.avNULL .~ Just True-- Empty string is not supported, use null
-  dEncode t = Just $ attributeValue & D.avS .~ Just t
+  dEncode = Just . dScalarEncode
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avS
   dDecode Nothing = Just ""
 instance DynamoEncodable BS.ByteString where
-  dEncode "" = Just $ attributeValue & D.avNULL .~ Just True
-  dEncode t = Just $ attributeValue & D.avB .~ Just t
+  dEncode = Just . dScalarEncode
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avB
@@ -116,9 +119,13 @@ instance DynamoEncodable (Set.Set Int) where
   dEncode dta = Just $ attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
   dDecode (Just attr) = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
   dDecode Nothing = Just mempty
-instance DynamoEncodable a => DynamoEncodable (HashMap T.Text a) where
-  dEncode dta = Just $ attributeValue & D.avM .~ HMap.mapMaybe dEncode dta
-  dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avM)
+instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
+  dEncode dta =
+      let textmap = HMap.fromList $ mapMaybe (\(key, val) -> (toText key,) <$> dEncode val) $ HMap.toList dta
+      in Just $ attributeValue & D.avM .~ textmap
+  dDecode (Just attr) =
+      let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecode (Just val)) $ HMap.toList (attr ^. D.avM)
+      in HMap.fromList <$> attrlist
   dDecode Nothing = Nothing
 -- | DynamoDB cannot represent empty items; [Maybe a] will lose Nothings
 instance DynamoEncodable a => DynamoEncodable [a] where
@@ -188,9 +195,13 @@ instance IsNumber Double
 instance IsNumber Integer
 
 -- | Class to limit certain operations to text-like only in queries
-class IsText a
-instance IsText T.Text
-instance IsText BS.ByteString
+-- Members of this class can be keys to HashMap
+class (Eq a, Hashable a) => IsText a where
+  toText :: a -> T.Text
+  fromText :: T.Text -> a
+instance IsText T.Text where
+  toText = id
+  fromText = id
 
 data RangeOper a where
   RangeEquals :: a -> RangeOper a
