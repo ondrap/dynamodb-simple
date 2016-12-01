@@ -110,7 +110,7 @@ deleteItemBatch p keys =
 -- Throws exception if the condition does not succeed
 deleteItemCond :: forall m a r t hash range rest.
     (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
+    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a OuterQuery -> m ()
 deleteItemCond p pkey cond =
   let (expr, attnames, attvals) = dumpCondition cond
       cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
@@ -137,7 +137,7 @@ queryKey consistency key range = do
 
 -- | Query item in a database, uses filter condition to further filter items server side
 queryKeyCond :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
-  => Consistency -> hash -> Maybe (RangeOper range) -> FilterCondition a -> Source m a
+  => Consistency -> hash -> Maybe (RangeOper range) -> FilterCondition a OuterQuery -> Source m a
 queryKeyCond consistency key range cond = do
     let (expr, attnames, attvals) = dumpCondition cond
         query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
@@ -155,7 +155,7 @@ scan consistency = do
 
 scanCond :: forall a m hash range rest r t.
     (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t)
-    => Consistency -> FilterCondition a -> Source m a
+    => Consistency -> FilterCondition a OuterQuery -> Source m a
 scanCond consistency cond = do
     let (expr, attnames, attvals) = dumpCondition cond
         cmd = dScan (Proxy :: Proxy a) & D.sConsistentRead . consistencyL .~ consistency

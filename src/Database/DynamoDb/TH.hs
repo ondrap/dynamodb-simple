@@ -7,9 +7,10 @@ module Database.DynamoDb.TH (
 ) where
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1)
-import           Control.Monad                   (forM_, void)
+import           Control.Monad                   (forM_)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
+import           Data.Bool                       (bool)
 import           Data.Char                       (toUpper)
 import           Data.Function                   ((&))
 import           Data.Monoid                     ((<>))
@@ -64,45 +65,56 @@ mkTableDefs ::
   -> Q [Dec]
 mkTableDefs migname (table, tblrange) indexes =
   execWriterT $ do
-    -- Instances for main table
-    lift [d|
-      instance Generic $(pure (ConT table))
-      instance HasDatatypeInfo $(pure (ConT table))
-      instance DynamoCollection $(pure (ConT table)) $(pure (ConT $ mrange tblrange)) IsTable
-      instance DynamoTable $(pure (ConT table)) $(pure (ConT $ mrange tblrange)) IsTable
-      |] >>= tell
-    --
     tblFieldNames <- getFieldNames table
-    constrNames <- buildColData tblFieldNames
-    forM_ constrNames $ \constr ->
-      lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT table))
-        |] >>= tell
+    buildColData tblFieldNames
+    genBaseCollection table tblrange Nothing
 
-    let tableAssoc = zip (map fst tblFieldNames) (zip constrNames (map snd tblFieldNames))
     -- Instances for indices
     forM_ indexes $ \(idx, idxrange) -> do
-        lift [d|
-          instance Generic $(pure (ConT idx))
-          instance HasDatatypeInfo $(pure (ConT idx))
-          instance DynamoCollection $(pure (ConT idx)) $(pure (ConT $ mrange idxrange)) IsIndex
-          instance DynamoIndex $(pure (ConT idx)) $(pure (ConT table)) $(pure (ConT $ mrange idxrange)) IsIndex
-          |] >>= tell
-
+        genBaseCollection idx idxrange (Just table)
         -- Check that all records from indices conform to main table and create instances
         instfields <- getFieldNames idx
         forM_ instfields $ \(fieldname, ltype) ->
-            case lookup fieldname tableAssoc of
-                Just (constr, ptype)
-                  | ltype == ptype -> say $ InstanceD [] (AppT (AppT (ConT ''InCollection) (ConT constr)) (ConT idx)) []
-                  | otherwise -> fail $ "Record '" <> fieldname <> "' form index " <> show idx <> " has different type from table " <> show table
+            case lookup fieldname tblFieldNames of
+                Just ptype
+                  | ltype /= ptype -> fail $ "Record '" <> fieldname <> "' form index " <> show idx <> " has different type from table " <> show table
+                  | otherwise -> return ()
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
+
     migfunc <- lift $ mkMigrationFunc migname table (map fst indexes)
     tell migfunc
+
+-- | Generate basic collection instances
+genBaseCollection :: Name -> Bool -> Maybe Name -> WriterT [Dec] Q ()
+genBaseCollection coll collrange mparent = do
+    lift [d|
+      instance Generic $(pure (ConT coll))
+      instance HasDatatypeInfo $(pure (ConT coll))
+      |] >>= tell
+    case mparent of
+      Nothing ->
+        lift [d|
+            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) IsTable
+            instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) IsTable
+             |] >>= tell
+      Just parent ->
+        lift [d|
+            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) IsIndex
+            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) IsIndex
+              |] >>= tell
+
+    tblFieldNames <- getFieldNames coll
+    -- Skip primary key, we cannot filter by it
+    let constrNames = mkConstrNames tblFieldNames
+    forM_ (drop (bool 1 2 collrange) constrNames) $ \constr ->
+      lift [d|
+        instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) OuterQuery
+        |] >>= tell
   where
     mrange True = ''WithRange
     mrange False = ''NoRange
+
 
 -- | Reify name and return list of record fields with type
 getFieldNames :: Name -> WriterT [Dec] Q [(String, Type)]
@@ -123,7 +135,7 @@ mkConstrNames :: [(String,a)] -> [Name]
 mkConstrNames = map (mkName . toConstrName . fst)
 
 -- | Build P_Column0 data, add it to instances and make colColumn variable
-buildColData :: [(String, Type)] -> WriterT [Dec] Q [Name]
+buildColData :: [(String, Type)] -> WriterT [Dec] Q ()
 buildColData fieldlist = do
     let constrNames = mkConstrNames fieldlist
     forM_ (zip fieldlist constrNames) $ \((fieldname, ltype), constr) -> do
@@ -135,7 +147,6 @@ buildColData fieldlist = do
           |] >>= tell
         say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT ''TypColumn)) (ConT constr))
         say $ ValD (VarP pat) (NormalB (ConE 'Column)) []
-    return constrNames
   where
     toPatName = ("col" <> ) . over (ix 0) toUpper
 
@@ -152,7 +163,7 @@ deriveEncCollection table =
       |] >>= tell
     -- Create column data
     tblFieldNames <- getFieldNames table
-    void $ buildColData tblFieldNames
+    buildColData tblFieldNames
     -- Create instance DynamoEncodable
     deriveEncodable table
 
@@ -162,7 +173,7 @@ deriveEncCollection table =
 --
 -- Creates:
 -- >>> instance DynamoEncodable Type where
--- >>>   dEncode val = attributeValue & avM .~ gdEncode val
+-- >>>   dEncode val = Just (attributeValue & avM .~ gdEncode val)
 -- >>>   dDecode (Just attr) = gdDecode (attr ^. avM)
 -- >>>   dDecode Nothing = Nothing
 deriveEncodable :: Name -> WriterT [Dec] Q ()
@@ -177,7 +188,7 @@ deriveEncodable table = do
     let constrs = mkConstrNames tblFieldNames
     forM_ constrs $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT table))
+        instance InCollection $(pure (ConT constr)) $(pure (ConT table)) InnerQuery
         |] >>= tell
 
 -- | Creates top-leval variable as a call to a migration function with partially applied createIndex
