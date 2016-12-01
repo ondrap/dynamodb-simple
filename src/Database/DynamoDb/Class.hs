@@ -61,7 +61,8 @@ data TableType = IsTable | IsIndex
 
 -- | Basic instance for dynamo collection (table or index)
 -- This instances fixes the tableName and the sort key
-class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r)
+class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r, All2 DynamoEncodable (Code a),
+       RecordOK (Code a) r)
   => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r, a -> t where
   primaryFields :: (Code a ~ '[ xs ': rest ]) => Proxy a -> NonEmpty T.Text
   primaryFields _ = key :| take (primaryFieldCount (Proxy :: Proxy r) - 1) rest
@@ -76,8 +77,7 @@ instance PrimaryFieldCount 'WithRange where
   primaryFieldCount _ = 2
 
 -- | Descritpion of dynamo table
-class (TableCreate a r, DynamoCollection a r t, Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a),
-       RecordOK (Code a) r, ItemOper a r)
+class (TableCreate a r, DynamoCollection a r t,  ItemOper a r)
        => DynamoTable a (r :: RangeType) (t :: TableType) | a -> r where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
@@ -142,8 +142,7 @@ instance TableCreate a 'WithRange where
   iCreateTable _ = defaultCreateTableRange
 
 -- | Instance for tables that can be queried
-class (RecordOK (Code a) 'WithRange, DynamoCollection a 'WithRange t)
-        => TableQuery a (t :: TableType) where
+class DynamoCollection a 'WithRange t => TableQuery a (t :: TableType) where
   -- | Return table name and index name
   qTableName :: Proxy a -> T.Text
   qIndexName :: Proxy a -> Maybe T.Text
@@ -189,7 +188,7 @@ type family RecordOK (a :: [[*]]) (r :: RangeType) :: Constraint where
     RecordOK '[ hash ': range ': rest ] 'WithRange = (DynamoScalar hash, DynamoScalar range, All DynamoEncodable rest)
 
 -- | Class representing a Global Secondary Index
-class (DynamoCollection a r t, Generic a, HasDatatypeInfo a)
+class DynamoCollection a r t
         => DynamoIndex a parent (r :: RangeType) (t :: TableType) | a -> parent, a -> r where
   indexName :: Proxy a -> T.Text
   default indexName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
@@ -315,8 +314,8 @@ defaultQueryKey p key (Just range) =
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
 
-defaultCreateIndex :: forall a r parent r2 hash rest xs rest2 t t2.
-  (DynamoCollection a r t, DynamoIndex a parent r 'IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
+defaultCreateIndex :: forall a r parent r2 hash rest xs rest2 t2.
+  (DynamoIndex a parent r 'IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
     RecordOK (Code a) 'NoRange, Code a ~ '[hash ': rest ]) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateIndex p thr =
@@ -332,8 +331,8 @@ defaultCreateIndex p thr =
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (toList parentKey ++ [hashname])) $ toList $ gdFieldNames (Proxy :: Proxy a)
 
-defaultCreateIndexRange :: forall a r parent r2 hash rest xs rest2 t t2 range.
-  (DynamoCollection a r t, DynamoIndex a parent r 'IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
+defaultCreateIndexRange :: forall a r parent r2 hash rest xs rest2 t2 range.
+  (DynamoIndex a parent r 'IsIndex, DynamoTable parent r2 t2, Code parent ~ '[ xs ': rest2 ],
     RecordOK (Code a) 'WithRange, Code a ~ '[hash ': range ': rest ]) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateIndexRange p thr =
