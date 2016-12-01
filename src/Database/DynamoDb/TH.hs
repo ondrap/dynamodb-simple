@@ -29,7 +29,7 @@ import qualified Data.Text                       as T
 import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
-import           Network.AWS.DynamoDB.Types      (attributeValue, avM)
+import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput)
 import           Network.AWS                     (MonadAWS)
 
 import           Database.DynamoDb.Class
@@ -217,7 +217,10 @@ mkMigrationFunc name table indices = do
     let lstmap = ListE (map idxtemplate indices)
     let funcname = mkName name
     m <- newName "m"
-    let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)] (AppT (VarT m) (TupleT 0)))
+    let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)]
+                                  (AppT (AppT ArrowT (ConT ''ProvisionedThroughput))
+                                  (AppT (AppT ArrowT (AppT ListT (ConT ''ProvisionedThroughput)))
+                                  (AppT (VarT m) (TupleT 0)))))
     return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (VarE 'runMigration)
               (SigE (ConE 'Proxy) (AppT (ConT ''Proxy)
               (ConT table)))) lstmap)) []]

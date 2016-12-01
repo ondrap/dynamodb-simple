@@ -186,15 +186,23 @@ createOrMigrate tabledef = do
             tryMigration tabledef descr
         | otherwise -> throwM (DynamoException "Didn't receive correct table description.")
 
-runMigration :: (DynamoTable table r 'IsTable, MonadAWS m, Code table ~ '[ hash ': range ': rest ]) =>
-  Proxy table -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])] -> m ()
-runMigration ptbl apindices = do
-  let tbl = createTable ptbl (D.provisionedThroughput 5 5)
-      indices = map ($ D.provisionedThroughput 5 5) apindices
-      idxattrs = concatMap snd indices
-  -- Bug in amazonka, we must not set the attribute if it is empty
-  -- see https://github.com/brendanhay/amazonka/issues/332
-  let final = if | null apindices -> tbl
-                 | otherwise -> tbl & D.ctGlobalSecondaryIndexes .~ map fst indices
-                                    & D.ctAttributeDefinitions %~ (\old -> nub (concat (old : [idxattrs])))
-  liftAWS $ createOrMigrate final
+runMigration :: (DynamoTable table r 'IsTable, MonadAWS m, Code table ~ '[ hash ': range ': rest ])
+  =>  Proxy table
+  -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])]
+  -> D.ProvisionedThroughput
+  -> [D.ProvisionedThroughput]
+  -> m ()
+runMigration ptbl apindices tblprov idxprov =
+  liftAWS $ do
+      let defaultProvision = D.provisionedThroughput 5 5
+      when (length apindices /= length idxprov) $
+          logmsg Error "Length of provisioning list for indexes doesn't equal number of indexes"
+      let tbl = createTable ptbl tblprov
+          indices = zipWith ($) apindices (idxprov ++ repeat defaultProvision)
+          idxattrs = concatMap snd indices
+      -- Bug in amazonka, we must not set the attribute if it is empty
+      -- see https://github.com/brendanhay/amazonka/issues/332
+      let final = if | null apindices -> tbl
+                     | otherwise -> tbl & D.ctGlobalSecondaryIndexes .~ map fst indices
+                                        & D.ctAttributeDefinitions %~ (\old -> nub (concat (old : [idxattrs])))
+      createOrMigrate final
