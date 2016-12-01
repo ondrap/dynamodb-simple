@@ -30,7 +30,7 @@ module Database.DynamoDb.Class (
   , translateFieldName
   , PrimaryKey
   , RecordOK
-  , ItemOper
+  , ItemOper(..)
   , TableQuery
   , TableScan
 ) where
@@ -45,9 +45,7 @@ import qualified Data.Text                        as T
 import           Generics.SOP
 import           GHC.Exts                         (Constraint)
 import qualified Network.AWS.DynamoDB.CreateTable as D
-import qualified Network.AWS.DynamoDB.DeleteItem  as D
 import qualified Network.AWS.DynamoDB.DeleteTable as D
-import qualified Network.AWS.DynamoDB.GetItem     as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import qualified Network.AWS.DynamoDB.Query       as D
 import qualified Network.AWS.DynamoDB.Scan        as D
@@ -55,7 +53,6 @@ import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput,
                                                    globalSecondaryIndex,
                                                    keySchemaElement)
 import qualified Network.AWS.DynamoDB.Types       as D
-import qualified Network.AWS.DynamoDB.UpdateItem  as D
 
 
 import           Database.DynamoDb.Internal       (rangeOper, rangeData)
@@ -104,52 +101,19 @@ class (TableCreate a r, DynamoCollection a r t,  ItemOper a r)
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
 
-  dDeleteItem :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-  dDeleteItem = iDeleteItem
-
-  dDeleteRequest :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
-  dDeleteRequest = iDeleteRequest
-
-  dGetItem :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
-  dGetItem = iGetItem
-
-  dUpdateItem :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
-  dUpdateItem = iUpdateItem
 
 -- | Dispatch class for NoRange/WithRange deleteItem
 class ItemOper a (r :: RangeType) where
-  iDeleteItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-  iDeleteRequest :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
-  iGetItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
-  iUpdateItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
+  dKeyAndAttr :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+            => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
 
 instance ItemOper a 'NoRange where
-  iDeleteItem p key =
-      D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-  iDeleteRequest p key =
-      D.deleteRequest & D.drKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-  iGetItem p key =
-      D.getItem (tableName p) & D.giKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-  iUpdateItem p key =
-      D.updateItem (tableName p) & D.uiKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-instance ItemOper a 'WithRange where
-  iDeleteItem p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
-    where
-      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
-  iDeleteRequest p (key, range) = D.deleteRequest & D.drKey .~ HMap.fromList plist
-    where
-      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
-  iGetItem p (key, range) = D.getItem (tableName p) & D.giKey .~ HMap.fromList plist
-    where
-      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
-  iUpdateItem p (key, range) = D.updateItem (tableName p) & D.uiKey .~ HMap.fromList plist
-    where
-      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
+  dKeyAndAttr p key = HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
 
+instance ItemOper a 'WithRange where
+  dKeyAndAttr p (key, range) = HMap.fromList plist
+    where
+      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
 
 -- | Dispatch class for NoRange/WithRange createTable
 class TableCreate a (r :: RangeType) where

@@ -66,6 +66,7 @@ module Database.DynamoDb (
     , (<.>), (<!>), (<!:>)
     -- * Data query
   , getItem
+  , getItemBatch
   , queryKey
   , queryKeyCond
   , scan
@@ -80,12 +81,15 @@ module Database.DynamoDb (
   , deleteItemCond
 ) where
 
-import           Control.Lens                        (Iso', at, iso, view, (.~),
-                                                      (^.), (%~))
+import           Control.Lens                        (Iso', at, iso, ix,
+                                                      toListOf, view, (%~),
+                                                      (.~), (^.))
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
+import           Control.Monad.Trans.Control         (MonadBaseControl)
 import           Data.Bool                           (bool)
-import           Data.Conduit                        (Source, (=$=), Conduit)
+import           Data.Conduit                        (Conduit, Source,
+                                                      runConduit, (=$=))
 import qualified Data.Conduit.List                   as CL
 import           Data.Function                       ((&))
 import           Data.HashMap.Strict                 (HashMap)
@@ -95,6 +99,7 @@ import           Data.Proxy
 import qualified Data.Text                           as T
 import           Generics.SOP
 import           Network.AWS
+import qualified Network.AWS.DynamoDB.BatchGetItem   as D
 import qualified Network.AWS.DynamoDB.BatchWriteItem as D
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
@@ -102,12 +107,14 @@ import qualified Network.AWS.DynamoDB.Query          as D
 import qualified Network.AWS.DynamoDB.Scan           as D
 import qualified Network.AWS.DynamoDB.Types          as D
 import qualified Network.AWS.DynamoDB.UpdateItem     as D
+import           Network.AWS.Pager                   (AWSPager (..))
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
-import           Database.DynamoDb.Types
 import           Database.DynamoDb.Internal
+import           Database.DynamoDb.Types
 import           Database.DynamoDb.Update
+
 
 -- | Parameter for queries involving read consistency settings.
 data Consistency = Eventually | Strongly
@@ -121,6 +128,24 @@ consistencyL = iso tocons fromcons
     tocons _ = Eventually
     fromcons Strongly = Just True
     fromcons Eventually = Just False
+
+
+dDeleteItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+          => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+dDeleteItem p pkey = D.deleteItem (tableName p) & D.diKey .~ dKeyAndAttr p pkey
+
+dDeleteRequest :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+          => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
+dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
+
+dGetItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+          => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyAndAttr p pkey
+
+dUpdateItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+          => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
+dUpdateItem p pkey = D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
+
 
 -- | Write item into the database.
 putItem :: (MonadAWS m, DynamoTable a r t) => a -> m ()
@@ -149,6 +174,27 @@ getItem consistency key = do
               Just res -> return (Just res)
               Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
 
+-- | Orphan instance; amaznonka-dynamodb currently doesn't provide it
+instance AWSPager D.BatchGetItem where
+  page rq rs
+    | null (rs ^. D.bgirsUnprocessedKeys) = Nothing
+    | otherwise = Just $ rq & D.bgiRequestItems .~ (rs ^. D.bgirsUnprocessedKeys)
+
+-- | Get batch of items. Run the command using pager
+-- (though amaznoka-dynamodb doesn't have such instance), but fetch the whole result;
+-- it should easily get in the memory, as there is at most 100 items to be sent.
+getItemBatch :: forall m a r t range hash rest.
+    (MonadAWS m, MonadBaseControl IO m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
+    => Consistency -> NonEmpty (PrimaryKey (Code a) r) -> m [a]
+getItemBatch consistency keys = do
+    let tblname = tableName (Proxy :: Proxy a)
+        wkaas = fmap (dKeyAndAttr (Proxy :: Proxy a)) keys
+        kaas = D.keysAndAttributes wkaas & D.kaaConsistentRead . consistencyL .~ consistency
+        cmd = D.batchGetItem & D.bgiRequestItems . at tblname .~ Just kaas
+
+    runConduit $ paginate cmd =$= rsDecode (toListOf (D.bgirsResponses . ix tblname . traverse))
+                              =$= CL.consume
+
 -- | Delete item from the database by specifying the primary key.
 deleteItem :: forall m a r t hash range rest.
     (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
@@ -172,11 +218,11 @@ deleteItemCond :: forall m a r t hash range rest.
     (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
 deleteItemCond p pkey cond =
-  let (expr, attnames, attvals) = dumpCondition cond
-      cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
-                               & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
-                               & D.diConditionExpression .~ Just expr
-  in void (send cmd)
+    let (expr, attnames, attvals) = dumpCondition cond
+        cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
+                                 & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
+                                 & D.diConditionExpression .~ Just expr
+    in void (send cmd)
 
 -- | Helper function to decode data from the conduit.
 rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t, All2 DynamoEncodable (Code a))
@@ -251,8 +297,8 @@ updateItemCond :: forall a m r hash range rest.
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> FilterCondition a -> m ()
 updateItemCond p pkey actions cond
   | Just (expr, attnames, actAttvals) <- dumpActions actions = do
-        let (cexpr, cattnames, cattvals) = dumpCondition cond
-            attvals = actAttvals  <> cattvals
+        let (cexpr, cattnames, condAttvals) = dumpCondition cond
+            attvals = actAttvals  <> condAttvals
             cmd = dUpdateItem p pkey  & D.uiUpdateExpression .~ Just expr
                                       & D.uiConditionExpression .~ Just cexpr
                                       & D.uiExpressionAttributeNames %~ (<> (attnames <> cattnames))
