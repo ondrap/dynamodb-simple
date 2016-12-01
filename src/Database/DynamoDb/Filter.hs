@@ -14,7 +14,7 @@ module Database.DynamoDb.Filter (
     , (&&.), (||.)
     , (==.), (/=.), (>=.), (>.), (<=.), (<.)
     , (<.>)
-    , attrExists, attrMissing, beginsWith, contains, tcontains, valIn, between
+    , attrExists, attrMissing, beginsWith, contains, setContains, valIn, between
     , size
     , Column(Column)
     , ColumnType(TypColumn)
@@ -171,14 +171,14 @@ beginsWith :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
 beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for rext-like attributes
-tcontains :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
+contains :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
   => Column typ ct col -> T.Text -> FilterCondition tbl
-tcontains col txt = Contains (nameGen col) (dScalarEncode txt)
+contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for sets
-contains :: (InCollection col tbl 'OuterQuery, IsColumn ct, DynamoEncodable a)
+setContains :: (InCollection col tbl 'OuterQuery, IsColumn ct, DynamoEncodable a)
   => Column (Set.Set a) ct col -> a -> FilterCondition tbl
-contains col txt = Contains (nameGen col) (dScalarEncode txt)
+setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | Size (i.e. number of bytes) of saved attribute
 size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int 'TypSize col
