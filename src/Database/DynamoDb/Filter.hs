@@ -32,35 +32,35 @@ import           Database.DynamoDb.Internal
 import           Database.DynamoDb.Types
 
 -- | Numeric/string range comparison
-between :: (Ord typ, InCollection col tbl 'OuterQuery, DynamoScalar typ)
+between :: (Ord typ, InCollection col tbl 'FullPath, DynamoScalar typ)
   => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
 -- | a IN (b, c, d); the list may contain up to 100 values
-valIn :: (InCollection col tbl 'OuterQuery, DynamoScalar typ)
+valIn :: (InCollection col tbl 'FullPath, DynamoScalar typ)
   => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dScalarEncode lst)
 
 -- | Check existence of attribute
-attrExists :: (InCollection col tbl 'OuterQuery) => Column typ 'TypColumn col -> FilterCondition tbl
+attrExists :: (InCollection col tbl 'FullPath) => Column typ 'TypColumn col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
 
 -- | Checks non-existence of an attribute
-attrMissing :: (InCollection col tbl 'OuterQuery) => Column typ 'TypColumn col -> FilterCondition tbl
+attrMissing :: (InCollection col tbl 'FullPath) => Column typ 'TypColumn col -> FilterCondition tbl
 attrMissing col = AttrMissing (nameGen col)
 
 -- | Comparison for text columns
-beginsWith :: (InCollection col tbl 'OuterQuery, IsText typ)
+beginsWith :: (InCollection col tbl 'FullPath, IsText typ)
   => Column typ 'TypColumn col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for text-like attributes.
-contains :: (InCollection col tbl 'OuterQuery, IsText typ)
+contains :: (InCollection col tbl 'FullPath, IsText typ)
   => Column typ 'TypColumn col -> T.Text -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for sets.
-setContains :: (InCollection col tbl 'OuterQuery, DynamoScalar a)
+setContains :: (InCollection col tbl 'FullPath, DynamoScalar a)
   => Column (Set.Set a) 'TypColumn col -> a -> FilterCondition tbl
 setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 
@@ -68,7 +68,7 @@ setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 size :: forall typ col. ColumnInfo col => Column typ 'TypColumn col -> Column Int 'TypSize col
 size (Column lst) = Size lst
 
-dcomp :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+dcomp :: (InCollection col tbl 'FullPath, DynamoEncodable typ)
   => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
 dcomp op col val = Comparison (nameGen col) op encval
   where
@@ -86,7 +86,7 @@ infixr 3 &&.
 infixr 3 ||.
 
 -- | Tests for equality. Automatically adjusts query to account for missing attributes.
-(==.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+(==.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ)
   => Column typ ctyp col -> typ -> FilterCondition tbl
 (==.) col val =
   case dEncode val of
@@ -99,28 +99,28 @@ infixr 3 ||.
 infix 4 ==.
 
 -- | > a /= b === Not (a == b)
-(/=.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+(/=.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ)
         => Column typ ctyp col -> typ -> FilterCondition tbl
 (/=.) col val = Not (dcomp "=" col val)
 infix 4 /=.
 
 
-(<=.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+(<=.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ, Ord typ)
         => Column typ ctyp col -> typ -> FilterCondition tbl
 (<=.) = dcomp "<="
 infix 4 <=.
 
-(<.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+(<.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ, Ord typ)
         => Column typ ctyp col -> typ -> FilterCondition tbl
 (<.) = dcomp "<"
 infix 4 <.
 
-(>.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+(>.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ, Ord typ)
         => Column typ ctyp col -> typ -> FilterCondition tbl
 (>.) = dcomp ">"
 infix 4 >.
 
-(>=.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+(>=.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ, Ord typ)
         => Column typ ctyp col -> typ -> FilterCondition tbl
 (>=.) = dcomp ">="
 infix 4 >=.

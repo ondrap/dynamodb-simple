@@ -55,16 +55,16 @@ import           Database.DynamoDb.Internal
 -- > instance DynamoIndex TestIndex Test NoRange IsIndex
 -- >
 -- > data P_First
--- > instance InCollection P_First Test 'InnerQuery
+-- > instance InCollection P_First Test 'NestedPath
 -- > data P_Second
--- > instance InCollection P_Second Test 'InnerQuery
--- > instance InCollection P_Second TestIndex 'InnerQuery
--- > instance InCollection P_Second TestIndex 'OuterQuery
+-- > instance InCollection P_Second Test 'NestedPath
+-- > instance InCollection P_Second TestIndex 'NestedPath
+-- > instance InCollection P_Second TestIndex 'FullPath
 -- > data P_Third
--- > instance InCollection P_Third Test 'InnerQuery
--- > instance InCollection P_Third Test 'OuterQuery
--- > instance InCollection P_Third TestIndex 'InnerQuery
--- > instance InCollection P_Third TestIndex 'OuterQuery
+-- > instance InCollection P_Third Test 'NestedPath
+-- > instance InCollection P_Third Test 'FullPath
+-- > instance InCollection P_Third TestIndex 'NestedPath
+-- > instance InCollection P_Third TestIndex 'FullPath
 -- >
 -- > colFirst :: Column Text TypColumn P_First
 -- > colFirst = Column
@@ -123,7 +123,7 @@ genBaseCollection coll collrange mparent = do
     let constrNames = mkConstrNames tblFieldNames
     forM_ (drop (bool 1 2 collrange) constrNames) $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) 'OuterQuery
+        instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) 'FullPath
         |] >>= tell
   where
     mrange True = 'WithRange
@@ -191,8 +191,8 @@ deriveEncCollection table =
 -- >   dEncode val = Just (attributeValue & avM .~ gdEncode val)
 -- >   dDecode (Just attr) = gdDecode (attr ^. avM)
 -- >   dDecode Nothing = Nothing
--- > instance InCollection column_type P_Column1 'InnerQuery
--- > instance InCollection column_type P_Column2 'InnerQuery
+-- > instance InCollection column_type P_Column1 'NestedPath
+-- > instance InCollection column_type P_Column2 'NestedPath
 -- > ...
 deriveEncodable :: Name -> WriterT [Dec] Q ()
 deriveEncodable table = do
@@ -206,7 +206,7 @@ deriveEncodable table = do
     let constrs = mkConstrNames tblFieldNames
     forM_ constrs $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT table)) 'InnerQuery
+        instance InCollection $(pure (ConT constr)) $(pure (ConT table)) 'NestedPath
         |] >>= tell
 
 -- | Creates top-leval variable as a call to a migration function with partially applied createIndex

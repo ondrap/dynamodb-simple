@@ -40,10 +40,10 @@ mkColumn = Column (IntraName (columnName (Proxy :: Proxy col)) :| [])
 data IntraColName = IntraName T.Text | IntraIndex Int
 
 -- Type of query for InCollection (we cannot query on primary key)
-data QueryType = InnerQuery | OuterQuery
+data PathType = NestedPath | FullPath
 
 -- | Signifies that the column is present in the table/index
-class ColumnInfo col => InCollection col tbl (query :: QueryType)
+class ColumnInfo col => InCollection col tbl (query :: PathType)
 
 -- | Class to get a column name from a Type specifying a column
 class ColumnInfo a where
