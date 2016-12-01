@@ -51,22 +51,36 @@ instance Exception DynamoException
 
 -- | Typeclass signifying that this is a scalar attribute and can be used as a hash/sort key.
 class DynamoEncodable a => DynamoScalar a where
+  -- | Type of scalar (number, string, bytestring)
   dType :: Proxy a -> ScalarAttributeType
+  -- | Scalars must have total encoding function
   dScalarEncode :: a -> AttributeValue
+  -- | Scalar values can form sets
+  dSetEncode :: Set.Set a -> AttributeValue
+  dSetDecode :: AttributeValue -> Maybe (Set.Set a)
+
 instance DynamoScalar Integer where
   dType _ = D.N
   dScalarEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
+  dSetEncode dta = attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
+  dSetDecode attr = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
 instance DynamoScalar Int where
   dType _ = D.N
   dScalarEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
+  dSetEncode dta = attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
+  dSetDecode attr = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
 instance DynamoScalar T.Text where
   dType _ = D.S
   dScalarEncode "" = attributeValue & D.avNULL .~ Just True-- Empty string is not supported, use null
   dScalarEncode t = attributeValue & D.avS .~ Just t
+  dSetEncode dta = attributeValue & D.avSS .~ Set.toList dta
+  dSetDecode attr = Just $ Set.fromList (attr ^. D.avSS)
 instance DynamoScalar BS.ByteString where
   dType _ = D.B
   dScalarEncode "" = attributeValue & D.avNULL .~ Just True
   dScalarEncode t = attributeValue & D.avB .~ Just t
+  dSetEncode dta = attributeValue & D.avBS .~ Set.toList dta
+  dSetDecode attr = Just $ Set.fromList (attr ^. D.avBS)
 
 -- | Helper pattern
 pattern EmptySet <- (Set.null -> True)
@@ -118,21 +132,11 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
-instance DynamoEncodable (Set.Set T.Text) where
+instance DynamoScalar a => DynamoEncodable (Set.Set a) where
   dEncode EmptySet = Nothing
-  dEncode dta = Just $ attributeValue & D.avSS .~ Set.toList dta
-  dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avSS)
-  dDecode Nothing = Just mempty
-instance DynamoEncodable (Set.Set BS.ByteString) where
-  dEncode EmptySet = Nothing
-  dEncode dta = Just $ attributeValue & D.avBS .~ Set.toList dta
-  dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avBS)
-  dDecode Nothing = Just mempty
-instance DynamoEncodable (Set.Set Int) where
-  dEncode EmptySet = Nothing
-  dEncode dta = Just $ attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
-  dDecode (Just attr) = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
-  dDecode Nothing = Just mempty
+  dEncode dta = Just $ dSetEncode dta
+  dDecode (Just attr) = dSetDecode attr
+  dDecode Nothing = Just Set.empty
 instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
   dEncode dta =
       let textmap = HMap.fromList $ mapMaybe (\(key, val) -> (toText key,) <$> dEncode val) $ HMap.toList dta
