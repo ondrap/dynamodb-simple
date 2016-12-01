@@ -14,13 +14,14 @@ module Database.DynamoDb.TH (
     mkTableDefs
   , deriveCollection
   , deriveEncodable
+    -- * Data types
+  , RangeType(..)
 ) where
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1)
 import           Control.Monad                   (forM_)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
-import           Data.Bool                       (bool)
 import           Data.Char                       (toUpper)
 import           Data.Function                   ((&))
 import           Data.Monoid                     ((<>))
@@ -74,8 +75,8 @@ import           Database.DynamoDb.Internal
 -- > colThidr = Column
 mkTableDefs ::
     String -- ^ Name of the migration function
-  -> (Name, Bool)      -- ^ Main record type name, bool indicates if it has a sort key
-  -> [(Name, Bool)] -- ^ Index records, bool indicates if it has a sort key
+  -> (Name, RangeType)      -- ^ Main record type name, bool indicates if it has a sort key
+  -> [(Name, RangeType)] -- ^ Index records, bool indicates if it has a sort key
   -> Q [Dec]
 mkTableDefs migname (table, tblrange) indexes =
   execWriterT $ do
@@ -100,7 +101,7 @@ mkTableDefs migname (table, tblrange) indexes =
     tell migfunc
 
 -- | Generate basic collection instances
-genBaseCollection :: Name -> Bool -> Maybe Name -> WriterT [Dec] Q ()
+genBaseCollection :: Name -> RangeType -> Maybe Name -> WriterT [Dec] Q ()
 genBaseCollection coll collrange mparent = do
     lift [d|
       instance Generic $(pure (ConT coll))
@@ -121,14 +122,15 @@ genBaseCollection coll collrange mparent = do
     tblFieldNames <- getFieldNames coll
     -- Skip primary key, we cannot filter by it
     let constrNames = mkConstrNames tblFieldNames
-    forM_ (drop (bool 1 2 collrange) constrNames) $ \constr ->
+    forM_ (drop (pkeySize collrange) constrNames) $ \constr ->
       lift [d|
         instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) 'FullPath
         |] >>= tell
   where
-    mrange True = 'WithRange
-    mrange False = 'NoRange
-
+    pkeySize WithRange = 2
+    pkeySize NoRange = 1
+    mrange WithRange = 'WithRange
+    mrange NoRange = 'NoRange
 
 -- | Reify name and return list of record fields with type
 getFieldNames :: Name -> WriterT [Dec] Q [(String, Type)]
