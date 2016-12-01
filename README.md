@@ -39,30 +39,23 @@ test = do
       -- Create tables, indices etc.
       migrate
       --
-      liftIO $ print "Putting item"
       putItemBatch ((Test "news" "john" "test" 0) :| [])
       --
-      liftIO $ print "Getting item"
       item <- getItem Eventually ("news", "john")
       liftIO $ print (item :: Maybe Test)
-      --
-      liftIO $ print "Deleting item"
       -- Choose one way to delete an item
       deleteItem (Proxy :: Proxy Test) ("news", "john")
       deleteItemCond (Proxy :: Proxy Test) ("news", "john") (colSubject ==. "test")
       deleteItemBatch (Proxy :: Proxy Test) (("news", "john") :| [])
-      --
-      liftIO $ print "Getting item"
-      item2 <- getItem Eventually ("news", "john")
-      liftIO $ print (item2 :: Maybe Test)
 ````
 
 ### Handling of NULLs
 
-DynamoDB does not accept empty strings. On the other hand there is a difference between `NULL` and `missing field`.
+DynamoDB does not accept empty strings/sets. On the other hand
+there is a difference between `NULL` and `missing field`.
 It's not obvious how to represent the `Maybe a` datatype and in particular `Maybe Text` datatype.
 
-In this framework an empty string is represented as `NULL`, `Nothing` is represented by omitting the value.
+In this framework an empty string/set is represented as `NULL`, `Nothing` is represented by omitting the value.
 
 * `Just Nothing :: Maybe (Maybe a)` will become `Nothing` on retrieval
 * `[Maybe a]` is not a good idea. `[Just 1, Nothing, Just 3]` will become `[Just 1, Just 3]` on retrieval
@@ -70,3 +63,8 @@ In this framework an empty string is represented as `NULL`, `Nothing` is represe
 * Don't try to use inequality comparisons (`>.`, `<.`) on empty strings
 * If you use `colMaybeCol == Nothing`, it gets internally replaced
   by `attr_missing(colMaybeCol)`, so it will behave as expected.
+* In case of schema change, `Maybe` columns are considered `Nothing`
+* In case of schema change, `String` columns are decoded as empty strings, `Set` columns
+  as empty sets
+* Filtres for `== ""` (and empty sets) are automatically enhanced to account for
+  non-existent attributes (i.e. after schema change)

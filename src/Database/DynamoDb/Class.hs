@@ -176,14 +176,14 @@ instance (DynamoIndex a parent r IsIndex, DynamoTable parent r1 t1, All2 DynamoE
   dScan = defaultScan
 
 -- | Parameter type for queryKeyRange
-type family PrimaryKey (a :: [[k]]) r :: *
-type instance PrimaryKey ('[ key ': range ': rest ] ) WithRange = (key, range)
-type instance PrimaryKey ('[ key ': rest ]) NoRange = key
+type family PrimaryKey (a :: [[*]]) r :: * where
+    PrimaryKey ('[ key ': range ': rest ] ) WithRange = (key, range)
+    PrimaryKey ('[ key ': rest ]) NoRange = key
 
 -- | Constraint to check that hash/sort key are scalar
-type family RecordOK (a :: [[k]]) r :: Constraint
-type instance RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash, All DynamoEncodable rest)
-type instance RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range, All DynamoEncodable rest)
+type family RecordOK (a :: [[*]]) r :: Constraint where
+    RecordOK '[ hash ': rest ] NoRange = (DynamoScalar hash, All DynamoEncodable rest)
+    RecordOK '[ hash ': range ': rest ] WithRange = (DynamoScalar hash, DynamoScalar range, All DynamoEncodable rest)
 
 -- | Class representing a Global Secondary Index
 class (DynamoCollection a r t, Generic a, HasDatatypeInfo a) => DynamoIndex a parent r t | a -> parent, a -> r where
