@@ -46,8 +46,7 @@ import qualified Network.AWS.DynamoDB.Scan         as D
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
 import           Database.DynamoDb.Types
-
-
+import           Database.DynamoDb.Internal
 
 -- | Parameter for queries involving read consistency settings
 data Consistency = Eventually | Strongly

@@ -25,6 +25,7 @@ import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
 import           Database.DynamoDb.Migration     (runMigration)
 import           Database.DynamoDb.Types
+import           Database.DynamoDb.Internal
 
 -- | Create instances, datatypes for table, fields and instances
 --

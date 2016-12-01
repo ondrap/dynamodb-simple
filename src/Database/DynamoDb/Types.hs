@@ -11,15 +11,12 @@
 module Database.DynamoDb.Types (
     DynamoEncodable(..)
   , DynamoScalar(..)
+  , DynamoException(..)
   , RangeOper(..)
-  , rangeOper
-  , rangeData
   , IsText, IsNumber
   , gdEncode
   , gdDecode
   , translateFieldName
-  , DynamoException(..)
-  , catMaybes
   , dScalarEncode
 ) where
 
@@ -31,7 +28,6 @@ import           Data.Function               ((&))
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
 import           Data.Maybe                  (catMaybes, mapMaybe, fromMaybe)
-import           Data.Monoid                 ((<>))
 import           Data.Proxy
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
@@ -56,15 +52,15 @@ instance DynamoScalar T.Text where
 instance DynamoScalar BS.ByteString where
   dType _ = D.B
 
--- | Helper function
-dScalarEncode :: DynamoEncodable a => a -> AttributeValue
+-- | Type-restricted 'dEncode'
+dScalarEncode :: DynamoScalar a => a -> AttributeValue
 dScalarEncode = fromMaybe (error "dEncode return Null value; this cannot happen") . dEncode
 
 -- | Helper pattern
 pattern EmptySet <- (Set.null -> True)
 
 class DynamoEncodable a where
-  -- | Must return Just for scalar values
+  -- | Must return Just for 'DynamoScalar' values
   dEncode :: a -> Maybe AttributeValue
   dDecode :: Maybe AttributeValue -> Maybe a
 
@@ -185,19 +181,16 @@ translateFieldName = T.pack . translate
       | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
       | otherwise = name
 
+-- | Class to limit certain operations for updates
 class IsNumber a
 instance IsNumber Int
 instance IsNumber Double
 instance IsNumber Integer
 
--- | Class to limit certain operations
-class IsNotNumber a
-instance IsNotNumber T.Text
-instance IsNotNumber BS.ByteString
-
--- | Class to limit certain operations to text-like only
+-- | Class to limit certain operations to text-like only in queries
 class IsText a
 instance IsText T.Text
+instance IsText BS.ByteString
 
 data RangeOper a where
   RangeEquals :: a -> RangeOper a
@@ -206,31 +199,4 @@ data RangeOper a where
   RangeGreaterThan :: a -> RangeOper a
   RangeGreaterThanE :: a -> RangeOper a
   RangeBetween :: a -> a -> RangeOper a
-  RangeBeginsWith :: (IsNotNumber a) => a -> RangeOper a
-
-rangeKey :: T.Text
-rangeKey = ":rangekey"
-
-rangeStart :: T.Text
-rangeStart = ":rangeStart"
-
-rangeEnd :: T.Text
-rangeEnd = ":rangeEnd"
-
-rangeOper :: RangeOper a -> T.Text -> T.Text
-rangeOper (RangeEquals _) n = "#" <> n <> " = " <> rangeKey
-rangeOper (RangeLessThan _) n = "#" <> n <> " < " <> rangeKey
-rangeOper (RangeLessThanE _) n = "#" <> n <> " <= " <> rangeKey
-rangeOper (RangeGreaterThan _) n = "#" <> n <> " > " <> rangeKey
-rangeOper (RangeGreaterThanE _) n = "#" <> n <> " >= " <> rangeKey
-rangeOper (RangeBetween _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND " <> rangeEnd
-rangeOper (RangeBeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
-
-rangeData :: DynamoScalar a => RangeOper a -> [(T.Text, AttributeValue)]
-rangeData (RangeEquals a) = [(rangeKey, dScalarEncode a)]
-rangeData (RangeLessThan a) = [(rangeKey, dScalarEncode a)]
-rangeData (RangeLessThanE a) = [(rangeKey, dScalarEncode a)]
-rangeData (RangeGreaterThan a) = [(rangeKey, dScalarEncode a)]
-rangeData (RangeGreaterThanE a) = [(rangeKey, dScalarEncode a)]
-rangeData (RangeBetween s e) = [(rangeStart, dScalarEncode s), (rangeEnd, dScalarEncode e)]
-rangeData (RangeBeginsWith a) = [(rangeKey, dScalarEncode a)]
+  RangeBeginsWith :: (IsText a) => a -> RangeOper a

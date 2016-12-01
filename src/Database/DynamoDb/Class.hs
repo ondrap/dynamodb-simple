@@ -1,18 +1,18 @@
 {-# LANGUAGE DataKinds              #-}
+{-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE OverloadedStrings      #-}
+{-# LANGUAGE PolyKinds              #-}
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE TupleSections          #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE TypeOperators          #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE PolyKinds          #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE UndecidableInstances          #-}
+{-# LANGUAGE UndecidableInstances   #-}
 
 module Database.DynamoDb.Class (
     DynamoCollection(..)
@@ -35,23 +35,26 @@ import           Control.Lens                     ((.~))
 import           Data.Foldable                    (toList)
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
-import           Data.List.NonEmpty               (nonEmpty, NonEmpty((:|)))
+import           Data.List.NonEmpty               (NonEmpty ((:|)), nonEmpty)
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
 import           GHC.Exts                         (Constraint)
 import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteItem  as D
-import qualified Network.AWS.DynamoDB.DeleteTable  as D
-import qualified Network.AWS.DynamoDB.Query  as D
-import qualified Network.AWS.DynamoDB.GetItem  as D
+import qualified Network.AWS.DynamoDB.DeleteTable as D
+import qualified Network.AWS.DynamoDB.GetItem     as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
-import qualified Network.AWS.DynamoDB.Scan      as D
-import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput, keySchemaElement,
-                                                   globalSecondaryIndex)
+import qualified Network.AWS.DynamoDB.Query       as D
+import qualified Network.AWS.DynamoDB.Scan        as D
+import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput,
+                                                   globalSecondaryIndex,
+                                                   keySchemaElement)
 import qualified Network.AWS.DynamoDB.Types       as D
 
-import Database.DynamoDb.Types
+import           Database.DynamoDb.Internal       (rangeOper, rangeData)
+import           Database.DynamoDb.Types
+
 
 -- | Data collection type - with hash key or with hash+sort key
 data RangeType = NoRange | WithRange
