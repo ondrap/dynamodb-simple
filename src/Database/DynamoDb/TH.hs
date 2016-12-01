@@ -12,7 +12,7 @@ module Database.DynamoDb.TH (
 
     -- * Macros
     mkTableDefs
-  , deriveEncCollection
+  , deriveCollection
   , deriveEncodable
 ) where
 
@@ -168,8 +168,8 @@ say :: Monad m => t -> WriterT [t] m ()
 say a = tell [a]
 
 -- | Derive 'DynamoEncodable' and prepare column instances for nested structures.
-deriveEncCollection :: Name -> Q [Dec]
-deriveEncCollection table =
+deriveCollection :: Name -> Q [Dec]
+deriveCollection table =
   execWriterT $ do
     lift [d|
       instance Generic $(pure (ConT table))
@@ -224,8 +224,51 @@ mkMigrationFunc name table indices = do
 
 -- $table
 --
+-- Use 'mkTableDefs' to derive everything about a table and its indexes. After running the function,
+-- you will end up with lots of instances, data types for columns ('P_TId', 'P_TBase', 'P_TDescr')
+-- and smart constructors for column ('colTId', 'colTBase', 'colTDescr', etc.) and one function (migrate)
+-- that creates table and updates the indexes.
+--
+-- * Table is named after a constructor of the datatype (Test)
+-- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.
+--   Underscore is not mandatory.
+-- * Column name is capitalized attribute name with prepended 'col' ('colTId')
+-- * Attribute names in an index table must be the same as Attribute names in the main table
+-- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId')
+--
+-- @
+-- data Test = Test {
+--     _tId :: Int
+--   , _tBase :: T.Text
+--   , _tDescr :: T.Text
+--   , _tDate :: T.Text
+--   , _tDict :: HashMap T.Text Inner
+-- } deriving (Show, GHC.Generic)
+--
+-- data TestIndex = TestIndex {
+--   , i_tDate :: T.Text
+--   , i_tDescr :: T.Text
+-- } deriving (Show, GHC.Generic)
+-- $(mkTableDefs "migrate" (''Test, True) [(''TestIndex, False)])
+-- @
 --
 
 -- $nested
 --
+-- Use 'deriveCollection' for records that are nested. Use 'deriveEncodable' for records that are
+-- nested in one table and serve as its own table at the same time.
 --
+-- @
+-- data Book = Book {
+--      author :: T.Text
+--    , title :: T.Text
+-- }
+-- $(deriveCollection ''Book)
+--
+-- data Test = Test {
+--     _tId :: Int
+--   , _tBase :: T.Text
+--   , _tBooks :: [Book]
+-- } deriving (Show, GHC.Generic)
+-- $(mkTableDefs "migrate" (''Test, True) [])
+-- @

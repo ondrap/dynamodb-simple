@@ -50,7 +50,7 @@ class ColumnInfo a where
   columnName :: Proxy a -> T.Text
 
 type NameGen = Supply T.Text T.Text -> Supply T.Text (T.Text, HashMap T.Text T.Text)
-nameGen :: forall typ ctyp col. ColumnInfo col => Column typ ctyp col -> NameGen
+nameGen :: Column typ ctyp col -> NameGen
 nameGen (Column lst) mkident = nameGenPath mkident lst
 nameGen (Size lst) mkident = do
     (path, attrs) <- nameGenPath mkident lst

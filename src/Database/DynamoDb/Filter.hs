@@ -65,7 +65,7 @@ setContains :: (InCollection col tbl 'FullPath, DynamoScalar a)
 setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | Size (i.e. number of bytes) of saved attribute
-size :: forall typ col. ColumnInfo col => Column typ 'TypColumn col -> Column Int 'TypSize col
+size :: Column typ 'TypColumn col -> Column Int 'TypSize col
 size (Column lst) = Size lst
 
 dcomp :: (InCollection col tbl 'FullPath, DynamoEncodable typ)

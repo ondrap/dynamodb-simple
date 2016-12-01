@@ -185,14 +185,14 @@ gdFieldNamesNP _ =
     ADT _ _ cs ->
         case hliftA getName cs of
           start :* Nil -> start
-          _ -> error "Cannot happen - gdFieldNamesNP"
+          _ -> error "Cannot happen - gdFieldNamesNP" -- GHC8 actually knows this
     _ -> error "Cannot even patternmatch because of type error"
   where
     getName :: ConstructorInfo xsd -> NP (K T.Text) xsd
     getName (Record _ fields) = hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
--- | Translates haskell field names to database field names.
+-- | Translates haskell field names to database attribute names.
 translateFieldName :: String -> T.Text
 translateFieldName = T.pack . translate
   where

@@ -24,7 +24,6 @@ library
                        Database.DynamoDb.Filter, Database.DynamoDb.TH,
                        Database.DynamoDb.Update
   other-modules:       Database.DynamoDb.Class, Database.DynamoDb.Migration
-  -- other-extensions:
   build-depends:       base >=4.8 && <5, amazonka-dynamodb, generics-sop,
                        unordered-containers, text, lens, double-conversion,
                        semigroups, bytestring, containers, monad-supply,

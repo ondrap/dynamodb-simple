@@ -1,4 +1,6 @@
-## DynamoDB layer for Haskell
+# DynamoDB layer for Haskell
+
+[![Build Status](https://travis-ci.org/ondrap/dynamodb-simple.svg?branch=master)](https://travis-ci.org/ondrap/dynamodb-simple) [![Hackage](https://img.shields.io/hackage/v/dynamodb-simple.svg)](https://hackage.haskell.org/package/dynamodb-simple)
 
 This library intends to simplify working with DynamoDB AWS database.
 It uses Generics code (using generics-sop) on top of your structures
