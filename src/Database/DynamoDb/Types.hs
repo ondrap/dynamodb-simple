@@ -78,6 +78,10 @@ class DynamoEncodable a where
   -- | Decode data. Return 'Nothing' on parsing error, gets
   --  'Nothing' on input if the attribute was missing in the database.
   dDecode :: Maybe AttributeValue -> Maybe a
+  -- | Aid for searching for empty list and hashmap; these can be represented
+  -- both by empty list and by missing value, if this returns true, enhance search.
+  dIsMissing :: a -> Bool
+  dIsMissing _ = False
 
 instance DynamoEncodable Integer where
   dEncode = Just . dScalarEncode
@@ -115,17 +119,17 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
 instance DynamoEncodable (Set.Set T.Text) where
-  dEncode EmptySet = Just $ attributeValue & D.avNULL .~ Just True
+  dEncode EmptySet = Nothing
   dEncode dta = Just $ attributeValue & D.avSS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avSS)
   dDecode Nothing = Just mempty
 instance DynamoEncodable (Set.Set BS.ByteString) where
-  dEncode EmptySet = Just $ attributeValue & D.avNULL .~ Just True
+  dEncode EmptySet = Nothing
   dEncode dta = Just $ attributeValue & D.avBS .~ Set.toList dta
   dDecode (Just attr) = Just $ Set.fromList (attr ^. D.avBS)
   dDecode Nothing = Just mempty
 instance DynamoEncodable (Set.Set Int) where
-  dEncode EmptySet = Just $ attributeValue & D.avNULL .~ Just True
+  dEncode EmptySet = Nothing
   dEncode dta = Just $ attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
   dDecode (Just attr) = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
   dDecode Nothing = Just mempty
@@ -136,12 +140,14 @@ instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
   dDecode (Just attr) =
       let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecode (Just val)) $ HMap.toList (attr ^. D.avM)
       in HMap.fromList <$> attrlist
-  dDecode Nothing = Nothing
+  dDecode Nothing = Just mempty
+  dIsMissing = null
 -- | DynamoDB cannot represent empty items; ['Maybe' a] will lose Nothings
 instance DynamoEncodable a => DynamoEncodable [a] where
   dEncode lst = Just $ attributeValue & D.avL .~ mapMaybe dEncode lst
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
-  dDecode Nothing = Nothing
+  dDecode Nothing = Just mempty
+  dIsMissing = null
 
 -- | Encode a record to hashmap using generic-sop.
 gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))

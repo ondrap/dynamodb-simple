@@ -50,18 +50,23 @@ test = do
 
 DynamoDB does not accept empty strings/sets. On the other hand
 there is a difference between `NULL` and `missing field`.
-It's not obvious how to represent the `Maybe a` datatype and in particular `Maybe Text` datatype.
+It's not obvious how to represent the `Maybe a` datatypes.
 
 In this framework an empty string/set is represented as `NULL`, `Nothing` is represented by omitting the value.
+Empty set is represented by omitting the value. This way you can still relatively safely
+use `Maybe Text`.
 
 * `Just Nothing :: Maybe (Maybe a)` will become `Nothing` on retrieval.
 * `[Maybe a]` is not a good idea. `[Just 1, Nothing, Just 3]` will become `[Just 1, Just 3]` on retrieval.
 * `HashMap Text (Maybe a)` is not a good idea either; missing values will disappear.
+* `Maybe (Set a)` will become `Nothing` on empty set
 * Don't try to use inequality comparisons (`>.`, `<.`) on empty strings.
 * If you use `colMaybeCol == Nothing`, it gets internally replaced
   by `attr_missing(colMaybeCol)`, so it will behave as expected.
 * In case of schema change, `Maybe` columns are considered `Nothing`.
 * In case of schema change, `String` columns are decoded as empty strings, `Set` columns
   as empty sets.
-* Filtres for `== ""` (and empty sets) are automatically enhanced to account for
-  non-existent attributes (i.e. after schema change).
+* Condition for `== ""`, `== []` etc. is automatically enhanced to account for non-existent attributes
+  (i.e. after schema change).
+* Empty list/empty hashmap is represented as empty list/hashmap; however it is allowed to be decoded
+  even when the attribute is missing in order to allow better schema migrations.
