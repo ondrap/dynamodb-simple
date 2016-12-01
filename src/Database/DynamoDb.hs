@@ -74,6 +74,7 @@ module Database.DynamoDb (
   , putItem
   , putItemBatch
   , updateItem
+  , updateItemCond
   , deleteItem
   , deleteItemBatch
   , deleteItemCond
@@ -230,6 +231,9 @@ scanCond consistency cond = do
                                        & D.sFilterExpression .~ Just expr
     paginate cmd =$= rsDecode (view D.srsItems)
 
+-- | Update item in a table
+--
+-- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItem :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> m ()
@@ -240,6 +244,22 @@ updateItem p pkey actions
                                       & bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
         void $ send cmd
   | otherwise = return ()
+
+-- | Update item in a table while specifying a condition
+updateItemCond :: forall a m r hash range rest.
+      (MonadAWS m, DynamoTable a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
+    => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> FilterCondition a -> m ()
+updateItemCond p pkey actions cond
+  | Just (expr, attnames, actAttvals) <- dumpActions actions = do
+        let (cexpr, cattnames, cattvals) = dumpCondition cond
+            attvals = actAttvals  <> cattvals
+            cmd = dUpdateItem p pkey  & D.uiUpdateExpression .~ Just expr
+                                      & D.uiConditionExpression .~ Just cexpr
+                                      & D.uiExpressionAttributeNames %~ (<> (attnames <> cattnames))
+                                      & bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+        void $ send cmd
+  | otherwise = return ()
+
 
 -- | Combine attributes from nested structures.
 --
