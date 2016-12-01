@@ -73,7 +73,11 @@ mkTableDefs migname (table, tblrange) indexes =
       |] >>= tell
     --
     tblFieldNames <- getFieldNames table
-    constrNames <- buildColData table tblFieldNames
+    constrNames <- buildColData tblFieldNames
+    forM_ constrNames $ \constr ->
+      lift [d|
+        instance InCollection $(pure (ConT constr)) $(pure (ConT table))
+        |] >>= tell
 
     let tableAssoc = zip (map fst tblFieldNames) (zip constrNames (map snd tblFieldNames))
     -- Instances for indices
@@ -115,15 +119,17 @@ getFieldNames tbl = do
 toConstrName :: String -> String
 toConstrName = ("P_" <>) . over (ix 0) toUpper
 
+mkConstrNames :: [(String,a)] -> [Name]
+mkConstrNames = map (mkName . toConstrName . fst)
+
 -- | Build P_Column0 data, add it to instances and make colColumn variable
-buildColData :: Name -> [(String, Type)] -> WriterT [Dec] Q [Name]
-buildColData table fieldlist = do
-    constrNames <- lift $ mapM (newName . toConstrName . fst) fieldlist
+buildColData :: [(String, Type)] -> WriterT [Dec] Q [Name]
+buildColData fieldlist = do
+    let constrNames = mkConstrNames fieldlist
     forM_ (zip fieldlist constrNames) $ \((fieldname, ltype), constr) -> do
         let pat = mkName (toPatName fieldname)
         say $ DataD [] constr [] [] []
         lift [d|
-            instance InCollection $(pure (ConT constr)) $(pure (ConT table))
             instance ColumnInfo $(pure (ConT constr)) where
                 columnName _ = T.pack fieldname
           |] >>= tell
@@ -140,14 +146,15 @@ say a = tell [a]
 deriveEncCollection :: Name -> Q [Dec]
 deriveEncCollection table =
   execWriterT $ do
-    say $ InstanceD [] (AppT (ConT ''Generic) (ConT table)) []
-    say $ InstanceD [] (AppT (ConT ''HasDatatypeInfo) (ConT table)) []
-    -- Create instance DynamoEncodable
-    enc <- lift $ deriveEncodable table
-    tell enc
+    lift [d|
+      instance Generic $(pure (ConT table))
+      instance HasDatatypeInfo $(pure (ConT table))
+      |] >>= tell
     -- Create column data
     tblFieldNames <- getFieldNames table
-    void $ buildColData table tblFieldNames
+    void $ buildColData tblFieldNames
+    -- Create instance DynamoEncodable
+    deriveEncodable table
 
 -- | Derive just the DynamoEncodable instance
 -- for structures that already have DynamoTable/DynamoIndex and you want to use
@@ -158,14 +165,20 @@ deriveEncCollection table =
 -- >>>   dEncode val = attributeValue & avM .~ gdEncode val
 -- >>>   dDecode (Just attr) = gdDecode (attr ^. avM)
 -- >>>   dDecode Nothing = Nothing
-deriveEncodable :: Name -> Q [Dec]
-deriveEncodable table =
-    [d|
+deriveEncodable :: Name -> WriterT [Dec] Q ()
+deriveEncodable table = do
+    lift [d|
       instance DynamoEncodable $(pure (ConT table)) where
-        dEncode val = attributeValue & avM .~ gdEncode val
-        dDecode (Just attr) = gdDecode (attr ^. avM)
-        dDecode Nothing = Nothing
-      |]
+          dEncode val = Just (attributeValue & avM .~ gdEncode val)
+          dDecode (Just attr) = gdDecode (attr ^. avM)
+          dDecode Nothing = Nothing
+      |] >>= tell
+    tblFieldNames <- getFieldNames table
+    let constrs = mkConstrNames tblFieldNames
+    forM_ constrs $ \constr ->
+      lift [d|
+        instance InCollection $(pure (ConT constr)) $(pure (ConT table))
+        |] >>= tell
 
 -- | Creates top-leval variable as a call to a migration function with partially applied createIndex
 mkMigrationFunc :: String -> Name -> [Name] -> Q [Dec]

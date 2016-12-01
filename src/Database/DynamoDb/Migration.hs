@@ -125,8 +125,6 @@ tryMigration tabledef descr = do
         logmsg Error msg
         throwM (DynamoException msg)
 
-    liftIO $ print $ tabledef ^. D.ctAttributeDefinitions
-    liftIO $ print $ descr ^. D.tdAttributeDefinitions
     -- Check that types of key attributes are the same
     unless (null conflictTableAttrs) $ do
         let msg = "Table or index " <> tblname <> " has conflicting attribute key types: " <> T.pack (show conflictTableAttrs)

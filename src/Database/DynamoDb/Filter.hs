@@ -22,7 +22,7 @@ module Database.DynamoDb.Filter (
 ) where
 
 import           Control.Lens               ((.~), (^.))
-import           Control.Monad.Supply       (evalSupply, supply)
+import           Control.Monad.Supply       (evalSupply, supply, Supply)
 import           Data.Function              ((&))
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
@@ -44,14 +44,14 @@ data TypCombined
 -- col - instance of ColumnInfo, uniquely identify a column
 data Column typ coltype col where
     Column :: Column typ TypColumn col
-    Size :: T.Text -> Column Int TypSize col
-    Combined :: T.Text -> Column typ TypCombined col
+    Size :: [T.Text] -> Column Int TypSize col
+    Combined :: [T.Text] -> Column typ TypCombined col
 
 (<.>) :: forall typ col1 typ2 col2 ct2.
         (InCollection col2 typ, ColumnInfo col1, ColumnInfo col2, IsColumn ct2)
       => Column typ TypColumn col1 -> Column typ2 ct2 col2 -> Column typ2 TypCombined col1
-(<.>) Column Column = Combined (columnName (Proxy :: Proxy col1) <> "." <> columnName (Proxy :: Proxy col2))
-(<.>) Column (Combined cname) = Combined (columnName (Proxy :: Proxy col1) <> "." <> cname)
+(<.>) Column Column = Combined [columnName (Proxy :: Proxy col1), columnName (Proxy :: Proxy col2)]
+(<.>) Column (Combined other) = Combined (columnName (Proxy :: Proxy col1) : other)
 (<.>) Column (Size _) = error "This cannot happen <.>"
 -- We need to associate from the right
 infixr 7 <.>
@@ -67,11 +67,17 @@ class ColumnInfo col => InCollection col tbl
 class ColumnInfo a where
   columnName :: Proxy a -> T.Text
 
-type NameGen = T.Text -> (T.Text, T.Text)
+type NameGen = Supply T.Text T.Text -> Supply T.Text (T.Text, HashMap T.Text T.Text)
 nameGen :: forall typ ctyp col. ColumnInfo col => Column typ ctyp col -> NameGen
-nameGen Column subst = (subst, columnName (Proxy :: Proxy col))
-nameGen (Size txt) subst = ("size(" <> subst <> ")", txt)
-nameGen (Combined txt) subst = (subst, txt)
+nameGen Column mkident = do
+    subst <- mkident
+    return (subst, HMap.fromList [(subst, columnName (Proxy :: Proxy col))])
+nameGen (Size lst) mkident = do
+    slist <- mapM (const mkident) lst
+    return ("size(" <> T.intercalate "." slist <> ")", HMap.fromList  (zip slist lst))
+nameGen (Combined lst) mkident = do
+    slist <- mapM (const mkident) lst
+    return (T.intercalate "." slist, HMap.fromList (zip slist lst))
 
 -- |
 data FilterCondition t =
@@ -105,49 +111,42 @@ dumpCondition fcondition = evalSupply (go fcondition) names
       (t, a, v) <- go cond
       return ("NOT (" <> t <> ")", a, v)
     go (Comparison name oper val) = do
-      ident <- supplyName
       idval <- supplyValue
-      let (subst, colname) = name ident
-          expr = subst <> " " <> oper <> " " <> idval
-      return (expr, HMap.singleton ident colname, HMap.singleton idval val)
+      (subst, attrnames) <- name supplyName
+      let expr = subst <> " " <> oper <> " " <> idval
+      return (expr, attrnames, HMap.singleton idval val)
     go (Between name v1 v2) = do
-      idname <- supplyName
       idstart <- supplyValue
       idstop <- supplyValue
-      let (subst, colname) = name idname
-          expr = subst <> " BETWEEN " <> idstart <> " AND " <> idstop
+      (subst, attrnames) <- name supplyName
+      let expr = subst <> " BETWEEN " <> idstart <> " AND " <> idstop
           vals = HMap.fromList [(idstart, v1), (idstop, v2)]
-      return (expr, HMap.singleton idname colname, vals)
+      return (expr, attrnames, vals)
 
     go (In name lst) = do
-        idname <- supplyName
-        let (subst, colname) = name idname
+        (subst, attrnames) <- name supplyName
         vlist <- mapM (\val -> (,val) <$> supplyValue) lst
         let expr = T.intercalate "," $ map fst vlist
-        return (subst <> " IN (" <> expr <> ")", HMap.singleton idname colname, HMap.fromList vlist)
+        return (subst <> " IN (" <> expr <> ")", attrnames, HMap.fromList vlist)
 
     go (AttrExists name) = do
-      ident <- supplyName
-      let (subst, colname) = name ident
-          expr = "attribute_exists(" <> subst <> ")"
-      return (expr, HMap.singleton ident colname, HMap.empty)
+      (subst, attrnames) <- name supplyName
+      let expr = "attribute_exists(" <> subst <> ")"
+      return (expr, attrnames, HMap.empty)
     go (AttrMissing name) = do
-      ident <- supplyName
-      let (subst, colname) = name ident
-          expr = "attribute_not_exists(" <> subst <> ")"
-      return (expr, HMap.singleton ident colname, HMap.empty)
+      (subst, attrnames) <- name supplyName
+      let expr = "attribute_not_exists(" <> subst <> ")"
+      return (expr, attrnames, HMap.empty)
     go (BeginsWith name val) = do
-      ident <- supplyName
       idval <- supplyValue
-      let (subst, colname) = name ident
-          expr = "begins_with(" <> subst <> ", " <> idval <> ")"
-      return (expr, HMap.singleton ident colname, HMap.singleton idval val)
+      (subst, attrnames) <- name supplyName
+      let expr = "begins_with(" <> subst <> ", " <> idval <> ")"
+      return (expr, attrnames, HMap.singleton idval val)
     go (Contains name val) = do
-      ident <- supplyName
       idval <- supplyValue
-      let (subst, colname) = name ident
-          expr = "contains(" <> subst <> ", " <> idval <> ")"
-      return (expr, HMap.singleton ident colname, HMap.singleton idval val)
+      (subst, attrnames) <- name supplyName
+      let expr = "contains(" <> subst <> ", " <> idval <> ")"
+      return (expr, attrnames, HMap.singleton idval val)
 
 between :: (Ord typ, InCollection col tbl, DynamoEncodable typ) => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
@@ -174,8 +173,8 @@ contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | Size (i.e. number of bytes) of saved attribute
 size :: forall typ col ct. (ColumnInfo col, IsColumn ct) => Column typ ct col -> Column Int TypSize col
-size Column = Size (columnName (Proxy :: Proxy col))
-size (Combined txt) = Size txt
+size Column = Size [columnName (Proxy :: Proxy col)]
+size (Combined lst) = Size lst
 size (Size _) = error "This cannot happen - size"
 
 dcomp :: (InCollection col tbl, DynamoEncodable typ) => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
