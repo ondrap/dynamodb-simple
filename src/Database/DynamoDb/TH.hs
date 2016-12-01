@@ -1,9 +1,19 @@
 {-# LANGUAGE TemplateHaskell #-}
 
+-- | Template Haskell macros to automatically derive instances, create column datatypes
+--  and create migrations functions.
+--
 module Database.DynamoDb.TH (
+    -- * Derive instances for table and indexes
+    -- $table
+
+    -- * Derive instances for nested records
+    -- $nested
+
+    -- * Macros
     mkTableDefs
-  , deriveEncodable
   , deriveEncCollection
+  , deriveEncodable
 ) where
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1)
@@ -19,49 +29,49 @@ import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
 import           Network.AWS.DynamoDB.Types      (attributeValue, avM)
-import           Network.AWS (MonadAWS)
+import           Network.AWS                     (MonadAWS)
 
 import           Database.DynamoDb.Class
-import           Database.DynamoDb.Filter
 import           Database.DynamoDb.Migration     (runMigration)
 import           Database.DynamoDb.Types
 import           Database.DynamoDb.Internal
 
--- | Create instances, datatypes for table, fields and instances
+-- | Create instances, datatypes for table, fields and instances.
 --
 -- Example of what gets created:
--- >>> data Test { first :: Text, second :: Text, third :: Int }
--- >>> data TestIndex { third :: Int, second :: T.Text}
 --
--- >>> $(mkTableDefs (''Test, True) [(''TestIndex, False)] )
--- >>> instance Generic Test
--- >>> instance HasDatatypeInfo Test
--- >>> instance DynamoCollection Test WithRange IsTable
--- >>> instance DynamoTable Test WithRange IsTable
---
--- >>> instance Generic TestIndex
--- >>> instance HasDatatypeInfo TestIndex
--- >>> instance DynamoCollection TestIndex NoRange IsIndex
--- >>> instance DynamoIndex TestIndex Test NoRange IsIndex
---
--- >>> data P_First
--- >>> instance InCollection P_First Test 'InnerQuery
--- >>> data P_Second
--- >>> instance InCollection P_Second Test 'InnerQuery
--- >>> instance InCollection P_Second TestIndex 'InnerQuery
--- >>> instance InCollection P_Second TestIndex 'OuterQuery
--- >>> data P_Third
--- >>> instance InCollection P_Third Test 'InnerQuery
--- >>> instance InCollection P_Third Test 'OuterQuery
--- >>> instance InCollection P_Third TestIndex 'InnerQuery
--- >>> instance InCollection P_Third TestIndex 'OuterQuery
---
--- >> colFirst :: Column Text TypColumn P_First
--- >> colFirst = Column
--- >> colSecond :: Column Text TypColumn P_Second
--- >> colSecond = Column
--- >> colThird :: Column Int TypColumn P_Third
--- >> colThidr = Column
+-- > data Test { first :: Text, second :: Text, third :: Int } deriving (GHC.Generic)
+-- > data TestIndex { third :: Int, second :: T.Text} deriving (GHC.Generic)
+-- >
+-- > $(mkTableDefs (''Test, True) [(''TestIndex, False)] )
+-- > instance Generic Test
+-- > instance HasDatatypeInfo Test
+-- > instance DynamoCollection Test WithRange IsTable
+-- > instance DynamoTable Test WithRange IsTable
+-- >
+-- > instance Generic TestIndex
+-- > instance HasDatatypeInfo TestIndex
+-- > instance DynamoCollection TestIndex NoRange IsIndex
+-- > instance DynamoIndex TestIndex Test NoRange IsIndex
+-- >
+-- > data P_First
+-- > instance InCollection P_First Test 'InnerQuery
+-- > data P_Second
+-- > instance InCollection P_Second Test 'InnerQuery
+-- > instance InCollection P_Second TestIndex 'InnerQuery
+-- > instance InCollection P_Second TestIndex 'OuterQuery
+-- > data P_Third
+-- > instance InCollection P_Third Test 'InnerQuery
+-- > instance InCollection P_Third Test 'OuterQuery
+-- > instance InCollection P_Third TestIndex 'InnerQuery
+-- > instance InCollection P_Third TestIndex 'OuterQuery
+-- >
+-- > colFirst :: Column Text TypColumn P_First
+-- > colFirst = Column
+-- > colSecond :: Column Text TypColumn P_Second
+-- > colSecond = Column
+-- > colThird :: Column Int TypColumn P_Third
+-- > colThidr = Column
 mkTableDefs ::
     String -- ^ Name of the migration function
   -> (Name, Bool)      -- ^ Main record type name, bool indicates if it has a sort key
@@ -157,7 +167,7 @@ buildColData fieldlist = do
 say :: Monad m => t -> WriterT [t] m ()
 say a = tell [a]
 
--- | Derive DynamoEncodable and prepare column instances for inner structures
+-- | Derive 'DynamoEncodable' and prepare column instances for nested structures.
 deriveEncCollection :: Name -> Q [Dec]
 deriveEncCollection table =
   execWriterT $ do
@@ -171,15 +181,19 @@ deriveEncCollection table =
     -- Create instance DynamoEncodable
     deriveEncodable table
 
--- | Derive just the DynamoEncodable instance
--- for structures that already have DynamoTable/DynamoIndex and you want to use
--- them inside other records
+-- | Derive just the 'DynamoEncodable' instance
+-- for structures that were already derived using 'mkTableDefs'
+-- and you want to use them as nested structures as well.
 --
 -- Creates:
--- >>> instance DynamoEncodable Type where
--- >>>   dEncode val = Just (attributeValue & avM .~ gdEncode val)
--- >>>   dDecode (Just attr) = gdDecode (attr ^. avM)
--- >>>   dDecode Nothing = Nothing
+--
+-- > instance DynamoEncodable Type where
+-- >   dEncode val = Just (attributeValue & avM .~ gdEncode val)
+-- >   dDecode (Just attr) = gdDecode (attr ^. avM)
+-- >   dDecode Nothing = Nothing
+-- > instance InCollection column_type P_Column1 'InnerQuery
+-- > instance InCollection column_type P_Column2 'InnerQuery
+-- > ...
 deriveEncodable :: Name -> WriterT [Dec] Q ()
 deriveEncodable table = do
     lift [d|
@@ -207,3 +221,11 @@ mkMigrationFunc name table indices = do
               (ConT table)))) lstmap)) []]
   where
     idxtemplate idx = AppE (VarE 'createIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
+
+-- $table
+--
+--
+
+-- $nested
+--
+--

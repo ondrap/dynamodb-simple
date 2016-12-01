@@ -1,19 +1,24 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE ViewPatterns        #-}
 
+-- |
 module Database.DynamoDb.Types (
-    DynamoEncodable(..)
+    -- * Exceptions
+    DynamoException(..)
+    -- * Marshalling
+  , DynamoEncodable(..)
   , DynamoScalar(..)
-  , DynamoException(..)
-  , RangeOper(..)
   , IsText(..), IsNumber
+    -- * Query datatype
+  , RangeOper(..)
+    -- * Utility functions
   , gdEncode
   , gdDecode
   , translateFieldName
@@ -31,18 +36,20 @@ import           Data.Maybe                  (catMaybes, mapMaybe)
 import           Data.Proxy
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
+import           Generics.SOP
 import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
-import           Generics.SOP
 
 
+-- | Exceptions thrown by some dynamodb-simple actions.
 data DynamoException = DynamoException T.Text
   deriving (Show)
 instance Exception DynamoException
 
+-- | Typeclass signifying that this is a scalar attribute and can be used as a hash/sort key.
 class DynamoEncodable a => DynamoScalar a where
   dType :: Proxy a -> ScalarAttributeType
   dScalarEncode :: a -> AttributeValue
@@ -64,9 +71,12 @@ instance DynamoScalar BS.ByteString where
 -- | Helper pattern
 pattern EmptySet <- (Set.null -> True)
 
+-- | Typeclass showing that this datatype can be saved to DynamoDB.
 class DynamoEncodable a where
-  -- | Must return Just for 'DynamoScalar' values
+  -- | Encode data. Return 'Nothing' if attribute should be omitted.
   dEncode :: a -> Maybe AttributeValue
+  -- | Decode data. Return 'Nothing' on parsing error, gets
+  --  'Nothing' on input if the attribute was missing in the database.
   dDecode :: Maybe AttributeValue -> Maybe a
 
 instance DynamoEncodable Integer where
@@ -98,7 +108,7 @@ instance DynamoEncodable BS.ByteString where
     | otherwise = attr ^. D.avB
   dDecode Nothing = Just ""
 
--- | Maybe (Maybe a) will not work well; it will 'join' the result
+-- | 'Maybe' ('Maybe' a) will not work well; it will 'join' the value in the database.
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode Nothing = Nothing
   dEncode (Just key) = dEncode key
@@ -127,12 +137,13 @@ instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
       let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecode (Just val)) $ HMap.toList (attr ^. D.avM)
       in HMap.fromList <$> attrlist
   dDecode Nothing = Nothing
--- | DynamoDB cannot represent empty items; [Maybe a] will lose Nothings
+-- | DynamoDB cannot represent empty items; ['Maybe' a] will lose Nothings
 instance DynamoEncodable a => DynamoEncodable [a] where
   dEncode lst = Just $ attributeValue & D.avL .~ mapMaybe dEncode lst
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
   dDecode Nothing = Nothing
 
+-- | Encode a record to hashmap using generic-sop.
 gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))
   => a -> HashMap T.Text AttributeValue
 gdEncode a =
@@ -156,6 +167,7 @@ gdEncode a =
     pdynamo :: Proxy DynamoEncodable
     pdynamo = Proxy
 
+-- | Decode hashmap to a record using generic-sop.
 gdDecode ::
     forall a xs. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
   => HMap.HashMap T.Text AttributeValue -> Maybe a
@@ -166,6 +178,7 @@ gdDecode attrs =
     decodeAttr (K name) = dDecode (HMap.lookup name attrs)
     dproxy = Proxy :: Proxy DynamoEncodable
 
+-- | Return record field names in NP structure.
 gdFieldNamesNP :: forall a xs. (HasDatatypeInfo a, Code a ~ '[ xs ]) => Proxy a -> NP (K T.Text) xs
 gdFieldNamesNP _ =
   case datatypeInfo (Proxy :: Proxy a) of
@@ -179,7 +192,7 @@ gdFieldNamesNP _ =
     getName (Record _ fields) = hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
 
--- | Function that translates haskell field names to database field names
+-- | Translates haskell field names to database field names.
 translateFieldName :: String -> T.Text
 translateFieldName = T.pack . translate
   where
@@ -188,14 +201,14 @@ translateFieldName = T.pack . translate
       | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
       | otherwise = name
 
--- | Class to limit certain operations for updates
+-- | Class to limit certain operations for updates.
 class IsNumber a
 instance IsNumber Int
 instance IsNumber Double
 instance IsNumber Integer
 
--- | Class to limit certain operations to text-like only in queries
--- Members of this class can be keys to HashMap
+-- | Class to limit certain operations to text-like only in queries.
+-- Members of this class can be keys to 'HashMap'.
 class (Eq a, Hashable a) => IsText a where
   toText :: a -> T.Text
   fromText :: T.Text -> a
@@ -203,6 +216,7 @@ instance IsText T.Text where
   toText = id
   fromText = id
 
+-- | Operation on range key for 'Database.queryKey.queryKey'.
 data RangeOper a where
   RangeEquals :: a -> RangeOper a
   RangeLessThan :: a -> RangeOper a
