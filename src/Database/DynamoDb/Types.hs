@@ -14,7 +14,7 @@ module Database.DynamoDb.Types (
   , RangeOper(..)
   , rangeOper
   , rangeData
-  , IsText
+  , IsText, IsNumber
   , gdEncode
   , gdDecode
   , translateFieldName
@@ -185,7 +185,10 @@ translateFieldName = T.pack . translate
       | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
       | otherwise = name
 
-
+class IsNumber a
+instance IsNumber Int
+instance IsNumber Double
+instance IsNumber Integer
 
 -- | Class to limit certain operations
 class IsNotNumber a

@@ -43,20 +43,23 @@ import           Database.DynamoDb.Types
 -- >>> instance DynamoCollection TestIndex NoRange IsIndex
 -- >>> instance DynamoIndex TestIndex Test NoRange IsIndex
 --
--- >>> data P_First0
--- >>> instance InCollection P_First0 Test
--- >>> data P_Second0
--- >>> instance InCollection P_Second0 Test
--- >>> instance InCollection P_Second0 TestIndex
--- >>> data P_Third0
--- >>> instance InCollection P_Third0 Test
--- >>> instance InCollection P_Third0 TestIndex
+-- >>> data P_First
+-- >>> instance InCollection P_First Test 'InnerQuery
+-- >>> data P_Second
+-- >>> instance InCollection P_Second Test 'InnerQuery
+-- >>> instance InCollection P_Second TestIndex 'InnerQuery
+-- >>> instance InCollection P_Second TestIndex 'OuterQuery
+-- >>> data P_Third
+-- >>> instance InCollection P_Third Test 'InnerQuery
+-- >>> instance InCollection P_Third Test 'OuterQuery
+-- >>> instance InCollection P_Third TestIndex 'InnerQuery
+-- >>> instance InCollection P_Third TestIndex 'OuterQuery
 --
--- >> colFirst :: Column Text TypColumn P_First0
+-- >> colFirst :: Column Text TypColumn P_First
 -- >> colFirst = Column
--- >> colSecond :: Column Text TypColumn P_Second0
+-- >> colSecond :: Column Text TypColumn P_Second
 -- >> colSecond = Column
--- >> colThird :: Column Int TypColumn P_Third0
+-- >> colThird :: Column Int TypColumn P_Third
 -- >> colThidr = Column
 mkTableDefs ::
     String -- ^ Name of the migration function

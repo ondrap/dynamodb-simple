@@ -84,10 +84,10 @@ nameGen (Combined lst) mkident = do
     return (T.intercalate "." slist, HMap.fromList (zip slist lst))
 
 -- |
-data FilterCondition t (q :: QueryType) =
-      And (FilterCondition t q) (FilterCondition t q)
-    | Or (FilterCondition t q) (FilterCondition t q)
-    | Not (FilterCondition t q)
+data FilterCondition t =
+      And (FilterCondition t) (FilterCondition t)
+    | Or (FilterCondition t) (FilterCondition t)
+    | Not (FilterCondition t)
     | Comparison NameGen T.Text D.AttributeValue
     | AttrExists NameGen
     | AttrMissing NameGen
@@ -97,7 +97,7 @@ data FilterCondition t (q :: QueryType) =
     | In NameGen [D.AttributeValue]
 
 -- | Return filter expression, attribute name map and attribute value map
-dumpCondition :: FilterCondition t 'OuterQuery -> (T.Text, HashMap T.Text T.Text, HashMap T.Text D.AttributeValue)
+dumpCondition :: FilterCondition t -> (T.Text, HashMap T.Text T.Text, HashMap T.Text D.AttributeValue)
 dumpCondition fcondition = evalSupply (go fcondition) names
   where
     names = map (\i -> T.pack ("G" <> show i)) ([1..] :: [Int])
@@ -152,32 +152,32 @@ dumpCondition fcondition = evalSupply (go fcondition) names
       let expr = "contains(" <> subst <> ", " <> idval <> ")"
       return (expr, attrnames, HMap.singleton idval val)
 
-between :: (Ord typ, InCollection col tbl q, DynamoEncodable typ)
-  => Column typ ctyp col -> typ -> typ -> FilterCondition tbl q
+between :: (Ord typ, InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+  => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
-valIn :: (InCollection col tbl q, DynamoEncodable typ)
-  => Column typ ctyp col -> [typ] -> FilterCondition tbl q
+valIn :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+  => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dScalarEncode lst)
 
-attrExists :: (InCollection col tbl q, IsColumn ct) => Column typ ct col -> FilterCondition tbl q
+attrExists :: (InCollection col tbl 'OuterQuery, IsColumn ct) => Column typ ct col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
 
-attrMissing :: (InCollection col tbl q, IsColumn ct) => Column typ ct col -> FilterCondition tbl q
+attrMissing :: (InCollection col tbl 'OuterQuery, IsColumn ct) => Column typ ct col -> FilterCondition tbl
 attrMissing col = AttrMissing (nameGen col)
 
-beginsWith :: (InCollection col tbl q, IsText typ, IsColumn ct)
-  => Column typ ct col -> T.Text -> FilterCondition tbl q
+beginsWith :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
+  => Column typ ct col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for rext-like attributes
-tcontains :: (InCollection col tbl q, IsText typ, IsColumn ct)
-  => Column typ ct col -> T.Text -> FilterCondition tbl q
+tcontains :: (InCollection col tbl 'OuterQuery, IsText typ, IsColumn ct)
+  => Column typ ct col -> T.Text -> FilterCondition tbl
 tcontains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for sets
-contains :: (InCollection col tbl q, IsColumn ct, DynamoEncodable a)
-  => Column (Set.Set a) ct col -> a -> FilterCondition tbl q
+contains :: (InCollection col tbl 'OuterQuery, IsColumn ct, DynamoEncodable a)
+  => Column (Set.Set a) ct col -> a -> FilterCondition tbl
 contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | Size (i.e. number of bytes) of saved attribute
@@ -186,23 +186,23 @@ size Column = Size [columnName (Proxy :: Proxy col)]
 size (Combined lst) = Size lst
 size (Size _) = error "This cannot happen - size"
 
-dcomp :: (InCollection col tbl q, DynamoEncodable typ)
-  => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl q
+dcomp :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+  => T.Text -> Column typ ctyp col -> typ -> FilterCondition tbl
 dcomp op col val = Comparison (nameGen col) op encval
   where
     -- Ord comparing against nothing doesn't make much sense - failback to NULL
     encval = fromMaybe (D.attributeValue & D.avNULL .~ Just True) (dEncode val)
 
-(&&.) :: FilterCondition t q -> FilterCondition t q -> FilterCondition t q
+(&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (&&.) = And
 infixr 3 &&.
 
-(||.) :: FilterCondition t q -> FilterCondition t q -> FilterCondition t q
+(||.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (||.) = Or
 infixr 3 ||.
 
-(==.) :: (InCollection col tbl q, DynamoEncodable typ)
-  => Column typ ctyp col -> typ -> FilterCondition tbl q
+(==.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+  => Column typ ctyp col -> typ -> FilterCondition tbl
 (==.) col val =
   case dEncode val of
     -- Hack to have '==. Nothing' correctly working
@@ -213,28 +213,28 @@ infixr 3 ||.
                 | otherwise -> Comparison (nameGen col) "=" encval
 infix 4 ==.
 
-(/=.) :: (InCollection col tbl q, DynamoEncodable typ)
-        => Column typ ctyp col -> typ -> FilterCondition tbl q
+(/=.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ)
+        => Column typ ctyp col -> typ -> FilterCondition tbl
 (/=.) col val = Not (dcomp "=" col val)
 infix 4 /=.
 
 
-(<=.) :: (InCollection col tbl q, DynamoEncodable typ, Ord typ)
-        => Column typ ctyp col -> typ -> FilterCondition tbl q
+(<=.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+        => Column typ ctyp col -> typ -> FilterCondition tbl
 (<=.) = dcomp "<="
 infix 4 <=.
 
-(<.) :: (InCollection col tbl q, DynamoEncodable typ, Ord typ)
-        => Column typ ctyp col -> typ -> FilterCondition tbl q
+(<.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+        => Column typ ctyp col -> typ -> FilterCondition tbl
 (<.) = dcomp "<"
 infix 4 <.
 
-(>.) :: (InCollection col tbl q, DynamoEncodable typ, Ord typ)
-        => Column typ ctyp col -> typ -> FilterCondition tbl q
+(>.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+        => Column typ ctyp col -> typ -> FilterCondition tbl
 (>.) = dcomp ">"
 infix 4 >.
 
-(>=.) :: (InCollection col tbl q, DynamoEncodable typ, Ord typ)
-        => Column typ ctyp col -> typ -> FilterCondition tbl q
+(>=.) :: (InCollection col tbl 'OuterQuery, DynamoEncodable typ, Ord typ)
+        => Column typ ctyp col -> typ -> FilterCondition tbl
 (>=.) = dcomp ">="
 infix 4 >=.
