@@ -73,6 +73,7 @@ module Database.DynamoDb (
     -- * Data modification
   , putItem
   , putItemBatch
+  , updateItem
   , deleteItem
   , deleteItemBatch
   , deleteItemCond
@@ -97,13 +98,15 @@ import qualified Network.AWS.DynamoDB.BatchWriteItem as D
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
 import qualified Network.AWS.DynamoDB.Query          as D
+import qualified Network.AWS.DynamoDB.Scan           as D
 import qualified Network.AWS.DynamoDB.Types          as D
-import qualified Network.AWS.DynamoDB.Scan         as D
+import qualified Network.AWS.DynamoDB.UpdateItem     as D
 
 import           Database.DynamoDb.Class
 import           Database.DynamoDb.Filter
 import           Database.DynamoDb.Types
 import           Database.DynamoDb.Internal
+import           Database.DynamoDb.Update
 
 -- | Parameter for queries involving read consistency settings.
 data Consistency = Eventually | Strongly
@@ -226,6 +229,17 @@ scanCond consistency cond = do
                                        & bool (D.sExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
                                        & D.sFilterExpression .~ Just expr
     paginate cmd =$= rsDecode (view D.srsItems)
+
+updateItem :: forall a m r hash range rest.
+      (MonadAWS m, DynamoTable a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
+    => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> m ()
+updateItem p pkey actions
+  | Just (expr, attnames, attvals) <- dumpActions actions = do
+        let cmd = dUpdateItem p pkey  & D.uiUpdateExpression .~ Just expr
+                                      & D.uiExpressionAttributeNames %~ (<> attnames)
+                                      & bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+        void $ send cmd
+  | otherwise = return ()
 
 -- | Combine attributes from nested structures.
 --

@@ -25,15 +25,26 @@ test = do
   runResourceT $ runAWS newenv $ do
       migrate -- Create tables, indices etc.
       --
-      putItemBatch ((Test "news" "john" "test" 0) :| [])
+      putItemBatch ((Test "news" "john" "test" 20) :| [])
       --
       item <- getItem Eventually ("news", "john")
       liftIO $ print (item :: Maybe Test)
+      --
+      runConduit $
+          scanCond Eventually (colReplies >. 15)
+            =$= CL.mapM_ (\(i :: Test) -> liftIO (print i))
 ````
 
 ### Limitations
 
-
+- Local secondary index are not supported. It could be probably supported similarly to the global secondary indexes.
+- Projections are not supported. Using some generic programming on tuples it should be possible.
+- Translation of field names to attribute names is hardcoded. It might be possible to parametrize it by
+  parametrizing the DynamoCollection or DynamoTable class.
+- Table name is hardcoded; this would be easy to solve in TH.
+- You cannot compare attributes between themselves (i.e. `colCurrentAccount >=. colAverageAccount`).
+  This would be possible with a different set of operators, it might be possible with overloading the current operators.
+  Does anybody need it?
 
 ### Handling of NULLs
 
@@ -43,14 +54,14 @@ It's not obvious how to represent the `Maybe a` datatype and in particular `Mayb
 
 In this framework an empty string/set is represented as `NULL`, `Nothing` is represented by omitting the value.
 
-* `Just Nothing :: Maybe (Maybe a)` will become `Nothing` on retrieval
-* `[Maybe a]` is not a good idea. `[Just 1, Nothing, Just 3]` will become `[Just 1, Just 3]` on retrieval
-* `HashMap Text (Maybe a)` is not a good idea either; missing values will disappear
-* Don't try to use inequality comparisons (`>.`, `<.`) on empty strings
+* `Just Nothing :: Maybe (Maybe a)` will become `Nothing` on retrieval.
+* `[Maybe a]` is not a good idea. `[Just 1, Nothing, Just 3]` will become `[Just 1, Just 3]` on retrieval.
+* `HashMap Text (Maybe a)` is not a good idea either; missing values will disappear.
+* Don't try to use inequality comparisons (`>.`, `<.`) on empty strings.
 * If you use `colMaybeCol == Nothing`, it gets internally replaced
   by `attr_missing(colMaybeCol)`, so it will behave as expected.
-* In case of schema change, `Maybe` columns are considered `Nothing`
+* In case of schema change, `Maybe` columns are considered `Nothing`.
 * In case of schema change, `String` columns are decoded as empty strings, `Set` columns
-  as empty sets
+  as empty sets.
 * Filtres for `== ""` (and empty sets) are automatically enhanced to account for
-  non-existent attributes (i.e. after schema change)
+  non-existent attributes (i.e. after schema change).

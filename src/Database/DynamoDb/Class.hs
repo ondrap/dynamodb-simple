@@ -55,6 +55,8 @@ import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput,
                                                    globalSecondaryIndex,
                                                    keySchemaElement)
 import qualified Network.AWS.DynamoDB.Types       as D
+import qualified Network.AWS.DynamoDB.UpdateItem  as D
+
 
 import           Database.DynamoDb.Internal       (rangeOper, rangeData)
 import           Database.DynamoDb.Types
@@ -70,7 +72,7 @@ data TableType = IsTable | IsIndex
 -- This instances fixes the tableName and the sort key
 class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r, All2 DynamoEncodable (Code a),
        RecordOK (Code a) r)
-  => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r, a -> t where
+  => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r t where
   primaryFields :: (Code a ~ '[ xs ': rest ]) => Proxy a -> NonEmpty T.Text
   primaryFields _ = key :| take (primaryFieldCount (Proxy :: Proxy r) - 1) rest
     where
@@ -85,7 +87,7 @@ instance PrimaryFieldCount 'WithRange where
 
 -- | Descritpion of dynamo table
 class (TableCreate a r, DynamoCollection a r t,  ItemOper a r)
-       => DynamoTable a (r :: RangeType) (t :: TableType) | a -> r where
+       => DynamoTable a (r :: RangeType) (t :: TableType) | a -> r t where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
   default tableName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
@@ -97,44 +99,54 @@ class (TableCreate a r, DynamoCollection a r t,  ItemOper a r)
 
   -- |
   createTable :: Code a ~ '[ hash ': range ': rest ] => Proxy a -> ProvisionedThroughput -> D.CreateTable
-  createTable = iCreateTable (Proxy :: Proxy r)
+  createTable = iCreateTable
 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
 
-  dDeleteItem :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-  dDeleteItem = iDeleteItem (Proxy :: Proxy r)
+  dDeleteItem :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+  dDeleteItem = iDeleteItem
 
-  dDeleteRequest :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
-  dDeleteRequest = iDeleteRequest (Proxy :: Proxy r)
+  dDeleteRequest :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
+  dDeleteRequest = iDeleteRequest
 
-  dGetItem :: (Code a ~ '[ key ': hash ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
-  dGetItem = iGetItem (Proxy :: Proxy r)
+  dGetItem :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+  dGetItem = iGetItem
+
+  dUpdateItem :: (Code a ~ '[ hash ': range ': rest ]) => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
+  dUpdateItem = iUpdateItem
 
 -- | Dispatch class for NoRange/WithRange deleteItem
 class ItemOper a (r :: RangeType) where
   iDeleteItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+            => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
   iDeleteRequest :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
+            => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
   iGetItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-            => Proxy r -> Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+            => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+  iUpdateItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+            => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
 
 instance ItemOper a 'NoRange where
-  iDeleteItem _ p key =
+  iDeleteItem p key =
       D.deleteItem (tableName p) & D.diKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-  iDeleteRequest _ p key =
+  iDeleteRequest p key =
       D.deleteRequest & D.drKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-  iGetItem _ p key =
+  iGetItem p key =
       D.getItem (tableName p) & D.giKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
+  iUpdateItem p key =
+      D.updateItem (tableName p) & D.uiKey .~ HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
 instance ItemOper a 'WithRange where
-  iDeleteItem _ p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
+  iDeleteItem p (key, range) = D.deleteItem (tableName p) & D.diKey .~ HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
-  iDeleteRequest _ p (key, range) = D.deleteRequest & D.drKey .~ HMap.fromList plist
+  iDeleteRequest p (key, range) = D.deleteRequest & D.drKey .~ HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
-  iGetItem _ p (key, range) = D.getItem (tableName p) & D.giKey .~ HMap.fromList plist
+  iGetItem p (key, range) = D.getItem (tableName p) & D.giKey .~ HMap.fromList plist
+    where
+      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
+  iUpdateItem p (key, range) = D.updateItem (tableName p) & D.uiKey .~ HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
 
@@ -142,11 +154,11 @@ instance ItemOper a 'WithRange where
 -- | Dispatch class for NoRange/WithRange createTable
 class TableCreate a (r :: RangeType) where
   iCreateTable :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
-                           => Proxy r -> Proxy a -> ProvisionedThroughput -> D.CreateTable
+                           => Proxy a -> ProvisionedThroughput -> D.CreateTable
 instance TableCreate a 'NoRange where
-  iCreateTable _ = defaultCreateTable
+  iCreateTable = defaultCreateTable
 instance TableCreate a 'WithRange where
-  iCreateTable _ = defaultCreateTableRange
+  iCreateTable = defaultCreateTableRange
 
 -- | Instance for tables that can be queried
 class DynamoCollection a 'WithRange t => TableQuery a (t :: TableType) where
@@ -196,7 +208,7 @@ type family RecordOK (a :: [[*]]) (r :: RangeType) :: Constraint where
 
 -- | Class representing a Global Secondary Index
 class DynamoCollection a r t
-        => DynamoIndex a parent (r :: RangeType) (t :: TableType) | a -> parent, a -> r where
+        => DynamoIndex a parent (r :: RangeType) (t :: TableType) | a -> parent r t where
   indexName :: Proxy a -> T.Text
   default indexName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
   indexName = gdConstrName
