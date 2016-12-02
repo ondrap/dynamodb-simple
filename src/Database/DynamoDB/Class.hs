@@ -29,7 +29,6 @@ module Database.DynamoDB.Class (
   , gdDecode
   , translateFieldName
   , PrimaryKey
-  , RecordOK
   , ItemOper(..)
   , TableQuery
   , TableScan
@@ -45,7 +44,6 @@ import           Data.List.NonEmpty               (NonEmpty ((:|)), nonEmpty)
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
-import           GHC.Exts                         (Constraint)
 import qualified Network.AWS.DynamoDB.CreateTable as D
 import qualified Network.AWS.DynamoDB.DeleteTable as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
@@ -69,8 +67,7 @@ data TableType = IsTable | IsIndex
 
 -- | Basic instance for dynamo collection (table or index)
 -- This instances fixes the tableName and the sort key
-class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r, All2 DynamoEncodable (Code a),
-       RecordOK (Code a) r)
+class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r, All2 DynamoEncodable (Code a))
   => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r t where
   primaryFields :: (Code a ~ '[ xs ': rest ]) => Proxy a -> NonEmpty T.Text
   primaryFields _ = key :| take (primaryFieldCount (Proxy :: Proxy r) - 1) rest
@@ -164,11 +161,6 @@ instance (DynamoCollection a r 'IsIndex,
 type family PrimaryKey (a :: [[*]]) (r :: RangeType) :: * where
     PrimaryKey ('[ key ': range ': rest ] ) 'WithRange = (key, range)
     PrimaryKey ('[ key ': rest ]) 'NoRange = key
-
--- | Constraint to check that hash/sort key are scalar
-type family RecordOK (a :: [[*]]) (r :: RangeType) :: Constraint where
-    RecordOK '[ hash ': rest ] 'NoRange = (All DynamoEncodable rest)
-    RecordOK '[ hash ': range ': rest ] 'WithRange = (All DynamoEncodable rest)
 
 -- | Class representing a Global Secondary Index
 class DynamoCollection a r 'IsIndex => DynamoIndex a parent (r :: RangeType) | a -> parent r where
@@ -289,7 +281,7 @@ defaultQueryKey p key (Just range) =
 
 defaultCreateIndex :: forall a r parent r2 hash rest xs rest2 v.
   (DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
-    RecordOK (Code a) 'NoRange, Code a ~ '[hash ': rest ], DynamoScalar v hash) =>
+    Code a ~ '[hash ': rest ], DynamoScalar v hash) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateIndex p thr =
     (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
@@ -306,7 +298,7 @@ defaultCreateIndex p thr =
 
 defaultCreateIndexRange :: forall a r parent r2 hash rest xs rest2 range v1 v2.
   (DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
-    RecordOK (Code a) 'WithRange, Code a ~ '[hash ': range ': rest ],
+    Code a ~ '[hash ': range ': rest ],
     DynamoScalar v1 hash, DynamoScalar v2 range) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateIndexRange p thr =

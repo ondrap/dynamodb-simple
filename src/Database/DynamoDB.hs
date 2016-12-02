@@ -279,8 +279,7 @@ type family UnMaybe a :: * where
 -- | Combine attributes from nested structures.
 --
 -- > colAddress <.> colStreet
-(<.>) :: forall typ col1 typ2 col2.
-        (InCollection col2 (UnMaybe typ) 'NestedPath, ColumnInfo col1, ColumnInfo col2)
+(<.>) :: (InCollection col2 (UnMaybe typ) 'NestedPath)
       => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
 (<.>) (Column (a1 :| rest1)) (Column (a2 :| rest2)) = Column (a1 :| rest1 ++ (a2 : rest2))
 -- We need to associate from the right
@@ -289,15 +288,14 @@ infixl 7 <.>
 -- | Access an index in a nested list.
 --
 -- > colUsers <!> 0 <.> colName
-(<!>) :: forall typ col. ColumnInfo col => Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
+(<!>) :: Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
 (<!>) (Column (a1 :| rest)) num = Column (a1 :| (rest ++ [IntraIndex num]))
 infixl 8 <!>
 
 -- | Access a key in a nested hashmap.
 --
 -- > colPhones <!:> "mobile" <.> colNumber
-(<!:>) :: forall typ col key. (ColumnInfo col, IsText key)
-    => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
+(<!:>) :: IsText key => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
 (<!:>) (Column (a1 :| rest)) key = Column (a1 :| (rest ++ [IntraName (toText key)]))
 infixl 8 <!:>
 
