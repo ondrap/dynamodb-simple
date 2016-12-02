@@ -34,6 +34,7 @@ module Database.DynamoDB.Class (
   , TableQuery
   , TableScan
   , TableCreate(..)
+  , IndexCreate(..)
 ) where
 
 import           Control.Lens                     ((.~))
@@ -126,33 +127,30 @@ class DynamoCollection a 'WithRange t => TableQuery a (t :: TableType) where
   qIndexName :: Proxy a -> Maybe T.Text
   -- | Create a query using both hash key and operation on range key
   -- On tables without range key, this degrades to queryKey
-  dQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ])
+  dQueryKey :: (Code a ~ '[ hash ': range ': rest ])
       => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
-instance  (DynamoTable a 'WithRange, DynamoCollection a 'WithRange 'IsTable,
-           Code a ~ '[ xs ]) => TableQuery a 'IsTable where
+instance  (DynamoCollection a 'WithRange 'IsTable, DynamoTable a 'WithRange, Code a ~ '[ xs ])
+    => TableQuery a 'IsTable where
   dQueryKey = defaultQueryKey
   qTableName = tableName
   qIndexName _ = Nothing
-instance  (RecordOK (Code a) 'WithRange, DynamoIndex a parent 'WithRange,
-            DynamoTable parent r1,
-            DynamoCollection a 'WithRange 'IsIndex, Code a ~ '[ xs ]) => TableQuery a 'IsIndex where
+instance  (DynamoCollection a 'WithRange 'IsIndex, DynamoIndex a parent 'WithRange, DynamoTable parent r1,
+            Code a ~ '[ xs ]) => TableQuery a 'IsIndex where
   dQueryKey = defaultQueryKey
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
 
-class (DynamoCollection a r t, All2 DynamoEncodable (Code a))
-      => TableScan a (r :: RangeType) (t :: TableType) where
+class DynamoCollection a r t => TableScan a (r :: RangeType) (t :: TableType) where
   -- | Return table name and index name
   qsTableName :: Proxy a -> T.Text
   qsIndexName :: Proxy a -> Maybe T.Text
   dScan :: Proxy a -> D.Scan
-instance (DynamoCollection a r 'IsTable, DynamoTable a r) => TableScan a r 'IsTable where
+instance DynamoTable a r => TableScan a r 'IsTable where
   qsTableName = tableName
   qsIndexName _ = Nothing
   dScan = defaultScan
-instance (DynamoCollection a r 'IsIndex, DynamoIndex a parent r,
-          DynamoTable parent r1, All2 DynamoEncodable (Code a))
-          => TableScan a r 'IsIndex where
+instance (DynamoCollection a r 'IsIndex,
+          DynamoIndex a parent r, DynamoTable parent r1) => TableScan a r 'IsIndex where
   qsTableName _ = tableName (Proxy :: Proxy parent)
   qsIndexName = Just . indexName
   dScan = defaultScan
@@ -173,22 +171,14 @@ class DynamoCollection a r 'IsIndex => DynamoIndex a parent (r :: RangeType) | a
   default indexName :: (Code a ~ '[ xss ]) => Proxy a -> T.Text
   indexName = gdConstrName
 
+class DynamoIndex a parent r => IndexCreate a parent (r :: RangeType) where
   createIndex ::
-      (DynamoCollection a r t, DynamoIndex a parent r, DynamoTable parent r2,
-        Code parent ~ '[ xs ': rest2 ],
-        RecordOK (Code a) r, Code a ~ '[hash ': range ': rest ], IndexCreate a r)
-         => Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
-  createIndex = iCreateIndex (Proxy :: Proxy r)
-
-class IndexCreate a (r :: RangeType) where
-  iCreateIndex ::
-    (DynamoCollection a r t, DynamoIndex a parent r, DynamoTable parent r2,
-      Code parent ~ '[ xs ': rest2 ], RecordOK (Code a) r, Code a ~ '[hash ': range ': rest ])
-             => Proxy r -> Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
-instance IndexCreate a 'NoRange where
-  iCreateIndex _ = defaultCreateIndex
-instance IndexCreate a 'WithRange where
-  iCreateIndex _ = defaultCreateIndexRange
+    (DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ], Code a ~ '[hash ': range ': rest ])
+             => Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+instance DynamoIndex a p 'NoRange => IndexCreate a p 'NoRange where
+  createIndex = defaultCreateIndex
+instance DynamoIndex a p 'WithRange => IndexCreate a p 'WithRange where
+  createIndex = defaultCreateIndexRange
 
 gdConstrName :: forall a xss. (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ])
   => Proxy a -> T.Text
@@ -270,9 +260,8 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType hashproxy),
                D.attributeDefinition rangename (dType rangeproxy)]
 
-defaultQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ],
-                    RecordOK (Code a) 'WithRange)
-  => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
+defaultQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ])
+    => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 defaultQueryKey p key Nothing =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
                          & D.qExpressionAttributeNames .~ HMap.singleton "#K" hashname
