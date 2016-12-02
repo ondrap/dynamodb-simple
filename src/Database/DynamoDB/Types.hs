@@ -26,8 +26,11 @@ module Database.DynamoDB.Types (
 
 import           Control.Exception           (Exception)
 import           Control.Lens                ((.~), (^.))
+import qualified Data.Aeson                  as AE
 import qualified Data.ByteString             as BS
+import           Data.ByteString.Lazy        (toStrict)
 import           Data.Double.Conversion.Text (toShortest)
+import           Data.Foldable               (toList)
 import           Data.Function               ((&))
 import           Data.Hashable               (Hashable)
 import           Data.HashMap.Strict         (HashMap)
@@ -36,6 +39,8 @@ import           Data.Maybe                  (catMaybes, mapMaybe)
 import           Data.Proxy
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
+import           Data.Text.Encoding          (decodeUtf8)
+import qualified Data.Vector                 as V
 import           Generics.SOP
 import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
@@ -152,6 +157,32 @@ instance DynamoEncodable a => DynamoEncodable [a] where
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
   dDecode Nothing = Just mempty
   dIsMissing = null
+
+-- | Partial encoding/decoding Aeson values. Empty strings get converted to NULL.
+-- This is not a raw API type; if a set is encountered, deserialization fails.
+instance DynamoEncodable AE.Value where
+  dEncode (AE.Object obj) = dEncode obj
+  dEncode (AE.Array lst) = dEncode (toList lst)
+  dEncode (AE.String txt) = dEncode txt
+  dEncode num@(AE.Number _) = Just $ attributeValue & D.avN .~ Just (decodeUtf8 (toStrict $ AE.encode num))
+  dEncode (AE.Bool b) = dEncode b
+  dEncode AE.Null = Just $ attributeValue & D.avNULL .~ Just True
+  --
+  dDecode Nothing = Just AE.Null
+  dDecode (Just attr) = -- Ok, this is going to be very hacky...
+    case AE.toJSON attr of
+      AE.Object obj -> case HMap.toList obj of
+          [("BOOL", AE.Bool val)] -> Just (AE.Bool val)
+          [("L", _)] -> (AE.Array .V.fromList) <$> mapM (dDecode . Just) (attr ^. D.avL)
+          [("M", _)] -> AE.Object <$> mapM (dDecode . Just) (attr ^. D.avM)
+          [("N", val)] -> Just val
+          [("S", AE.String val)] -> Just (AE.String val)
+          [("NULL", _)] -> Just AE.Null
+          _ -> Nothing
+      _ -> Nothing -- This shouldn't happen
+  --
+  dIsMissing AE.Null = True
+  dIsMissing _ = False
 
 -- | Encode a record to hashmap using generic-sop.
 gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))

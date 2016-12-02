@@ -29,7 +29,7 @@ library
                        semigroups, bytestring, containers, monad-supply,
                        template-haskell, transformers, exceptions,
                        amazonka, monad-loops, conduit, hashable,
-                       monad-control, amazonka-core
+                       monad-control, amazonka-core, aeson, vector
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -fwarn-incomplete-uni-patterns
