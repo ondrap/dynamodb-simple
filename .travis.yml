@@ -17,7 +17,6 @@ before_install:
   - cabal --version
 
 install:
-  - find .
   - travis_retry cabal update
   - sed -i 's/^jobs:/-- jobs:/' ${HOME}/.cabal/config
   - cabal install --only-dependencies --enable-tests
