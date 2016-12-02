@@ -8,6 +8,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE DefaultSignatures   #-}
+{-# LANGUAGE KindSignatures   #-}
+{-# LANGUAGE MultiParamTypeClasses   #-}
+{-# LANGUAGE UndecidableInstances   #-}
+{-# LANGUAGE FunctionalDependencies   #-}
 
 -- |
 module Database.DynamoDB.Types (
@@ -23,6 +28,8 @@ module Database.DynamoDB.Types (
   , gdEncode
   , gdDecode
   , translateFieldName
+  , dType
+  , dScalarEncode
 ) where
 
 import           Control.Exception           (Exception)
@@ -48,6 +55,7 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
+import Data.Scientific (Scientific, toBoundedInteger, isInteger)
 
 
 -- | Exceptions thrown by some dynamodb-simple actions.
@@ -55,44 +63,64 @@ data DynamoException = DynamoException T.Text
   deriving (Show)
 instance Exception DynamoException
 
+data ScalarValue (v :: D.ScalarAttributeType) where
+    ScS :: T.Text -> ScalarValue 'D.S
+    ScN :: Scientific -> ScalarValue 'D.N
+    ScB :: BS.ByteString -> ScalarValue 'D.B
+
+class ScalarAuto (v :: D.ScalarAttributeType) where
+  dTypeV :: Proxy v -> ScalarAttributeType
+  dSetEncodeV :: [ScalarValue v] -> AttributeValue
+  dSetDecodeV :: AttributeValue -> Maybe [ScalarValue v]
+instance ScalarAuto 'D.S where
+  dTypeV _ = D.S
+  dSetEncodeV lst = attributeValue & D.avSS .~ map (\(ScS txt) -> txt) lst
+  dSetDecodeV attr = Just $ map ScS $ attr ^. D.avSS
+instance ScalarAuto 'D.N where
+  dTypeV _ = D.N
+  dSetEncodeV lst = attributeValue & D.avNS .~ map (\(ScN num) -> T.pack (show num)) lst
+  dSetDecodeV attr = traverse (\n -> ScN <$> readMaybe (T.unpack n)) (attr ^. D.avSS)
+instance ScalarAuto 'D.B where
+  dTypeV _ = D.B
+  dSetEncodeV lst = attributeValue & D.avBS .~ map (\(ScB txt) -> txt) lst
+  dSetDecodeV attr = Just $ map ScB $ attr ^. D.avBS
+
+dType :: forall a v. DynamoScalar a v => Proxy a -> ScalarAttributeType
+dType _ = dTypeV (Proxy :: Proxy v)
+
+dScalarEncode :: DynamoScalar a v => a -> AttributeValue
+dScalarEncode a =
+  case scalarEncode a of
+    ScS txt -> attributeValue & D.avS .~ Just txt
+    ScN num -> attributeValue & D.avN .~ Just (T.pack (show num))
+    ScB bs -> attributeValue & D.avB .~ Just bs
+
+dSetEncode :: DynamoScalar a v => Set.Set a -> AttributeValue
+dSetEncode vset = dSetEncodeV $ map scalarEncode $ toList vset
+
+dSetDecode :: (Ord a, DynamoScalar a v) => AttributeValue -> Maybe (Set.Set a)
+dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.fromList
+
 -- | Typeclass signifying that this is a scalar attribute and can be used as a hash/sort key.
-class DynamoEncodable a => DynamoScalar a where
-  -- | Type of scalar (number, string, bytestring)
-  dType :: Proxy a -> ScalarAttributeType
+class (ScalarAuto v, DynamoEncodable a) => DynamoScalar a (v :: D.ScalarAttributeType) | a -> v where
   -- | Scalars must have total encoding function
-  dScalarEncode :: a -> AttributeValue
-  -- | Scalar values can form sets
-  dSetEncode :: Set.Set a -> AttributeValue
-  dSetDecode :: AttributeValue -> Maybe (Set.Set a)
+  scalarEncode :: a -> ScalarValue v
+  scalarDecode :: ScalarValue v -> Maybe a
 
-instance DynamoScalar Integer where
-  dType _ = D.N
-  dScalarEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
-  dSetEncode dta = attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
-  dSetDecode attr = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
-instance DynamoScalar Int where
-  dType _ = D.N
-  dScalarEncode num = attributeValue & D.avN .~ (Just $ T.pack (show num))
-  dSetEncode dta = attributeValue & D.avNS .~ map (T.pack . show) (Set.toList dta)
-  dSetDecode attr = Set.fromList <$> traverse (readMaybe . T.unpack) (attr ^. D.avNS)
-instance DynamoScalar T.Text where
-  dType _ = D.S
-  dScalarEncode "" = attributeValue & D.avNULL .~ Just True-- Empty string is not supported, use null
-  dScalarEncode t = attributeValue & D.avS .~ Just t
-  dSetEncode dta = attributeValue & D.avSS .~ Set.toList dta
-  dSetDecode attr = Just $ Set.fromList (attr ^. D.avSS)
-instance DynamoScalar BS.ByteString where
-  dType _ = D.B
-  dScalarEncode "" = attributeValue & D.avNULL .~ Just True
-  dScalarEncode t = attributeValue & D.avB .~ Just t
-  dSetEncode dta = attributeValue & D.avBS .~ Set.toList dta
-  dSetDecode attr = Just $ Set.fromList (attr ^. D.avBS)
-
--- | Helper pattern
-#if __GLASGOW_HASKELL__ >= 800
-EmptySet :: Set.Set a
-#endif
-pattern EmptySet <- (Set.null -> True)
+instance DynamoScalar Integer 'D.N where
+  scalarEncode = ScN . fromIntegral
+  scalarDecode (ScN num)
+    | isInteger num = Just $ truncate num
+    | otherwise = Nothing
+instance DynamoScalar Int 'D.N where
+  scalarEncode = ScN . fromIntegral
+  scalarDecode (ScN num) = toBoundedInteger num
+instance DynamoScalar T.Text 'D.S where
+  scalarEncode = ScS
+  scalarDecode (ScS txt) = Just txt
+instance DynamoScalar BS.ByteString 'D.B where
+  scalarEncode = ScB
+  scalarDecode (ScB bs) = Just bs
 
 -- | Typeclass showing that this datatype can be saved to DynamoDB.
 class DynamoEncodable a where
@@ -141,8 +169,8 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
-instance DynamoScalar a => DynamoEncodable (Set.Set a) where
-  dEncode EmptySet = Nothing
+instance (Ord a, DynamoScalar a v) => DynamoEncodable (Set.Set a) where
+  dEncode (Set.null -> True) = Nothing
   dEncode dta = Just $ dSetEncode dta
   dDecode (Just attr) = dSetDecode attr
   dDecode Nothing = Just Set.empty

@@ -32,12 +32,12 @@ import           Database.DynamoDB.Internal
 import           Database.DynamoDB.Types
 
 -- | Numeric/string range comparison
-between :: (Ord typ, InCollection col tbl 'FullPath, DynamoScalar typ)
+between :: (Ord typ, InCollection col tbl 'FullPath, DynamoScalar typ v)
   => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
 between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
 -- | a IN (b, c, d); the list may contain up to 100 values
-valIn :: (InCollection col tbl 'FullPath, DynamoScalar typ)
+valIn :: (InCollection col tbl 'FullPath, DynamoScalar typ v)
   => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dScalarEncode lst)
 
@@ -60,7 +60,7 @@ contains :: (InCollection col tbl 'FullPath, IsText typ)
 contains col txt = Contains (nameGen col) (dScalarEncode txt)
 
 -- | CONTAINS condition for sets.
-setContains :: (InCollection col tbl 'FullPath, DynamoScalar a)
+setContains :: (InCollection col tbl 'FullPath, DynamoScalar a v)
   => Column (Set.Set a) 'TypColumn col -> a -> FilterCondition tbl
 setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 
