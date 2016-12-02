@@ -90,16 +90,24 @@ mkTableDefs migname (table, tblrange) indexes =
         genBaseCollection idx idxrange (Just table)
         -- Check that all records from indices conform to main table and create instances
         instfields <- getFieldNames idx
-        forM_ instfields $ \(fieldname, ltype) ->
+        let pkeytable = [True | _ <- [1..(pkeySize idxrange)] ] ++ repeat False
+        forM_ (zip instfields pkeytable) $ \((fieldname, ltype), isKey) ->
             case lookup fieldname tblFieldNames of
+                Just (AppT (ConT mbtype) inptype)
+                  | mbtype == ''Maybe && inptype == ltype && isKey -> return () -- Allow sparse index - 'Maybe a' in table, 'a' in index
                 Just ptype
                   | ltype /= ptype -> fail $ "Record '" <> fieldname <> "' form index " <> show idx <> " has different type from table " <> show table
+                                              <> ": " <> show ltype <> " /= " <> show ptype
                   | otherwise -> return ()
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
 
     migfunc <- lift $ mkMigrationFunc migname table (map fst indexes)
     tell migfunc
+
+pkeySize :: RangeType -> Int
+pkeySize WithRange = 2
+pkeySize NoRange = 1
 
 -- | Generate basic collection instances
 genBaseCollection :: Name -> RangeType -> Maybe Name -> WriterT [Dec] Q ()
@@ -128,8 +136,6 @@ genBaseCollection coll collrange mparent = do
         instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) 'FullPath
         |] >>= tell
   where
-    pkeySize WithRange = 2
-    pkeySize NoRange = 1
     mrange WithRange = 'WithRange
     mrange NoRange = 'NoRange
 
