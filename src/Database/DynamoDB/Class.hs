@@ -210,7 +210,6 @@ gdRangeField :: forall a hash range rest. (Generic a, HasDatatypeInfo a, Code a 
 gdRangeField _ =
   case datatypeInfo (Proxy :: Proxy a) of
     ADT _ _ cs -> head $ hcollapse $ hliftA getName cs
-    _ -> error "Cannot even patternmatch because of type error"
   where
     getName :: ConstructorInfo xs -> K (T.Text, Proxy range) xs
     getName (Record _ fields) =

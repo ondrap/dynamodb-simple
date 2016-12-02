@@ -48,7 +48,6 @@ import           Control.Lens                        (Iso', at, iso, ix,
                                                       (.~), (^.))
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
-import           Control.Monad.Trans.Control         (MonadBaseControl)
 import           Data.Bool                           (bool)
 import           Data.Conduit                        (Conduit, Source,
                                                       runConduit, (=$=))
@@ -146,7 +145,7 @@ instance AWSPager D.BatchGetItem where
 -- (though amaznoka-dynamodb doesn't have such instance), but fetch the whole result;
 -- it should easily get in the memory, as there is at most 100 items to be sent.
 getItemBatch :: forall m a r range hash rest.
-    (MonadAWS m, MonadBaseControl IO m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
     => Consistency -> NonEmpty (PrimaryKey (Code a) r) -> m [a]
 getItemBatch consistency keys = do
     let tblname = tableName (Proxy :: Proxy a)
@@ -187,7 +186,7 @@ deleteItemCond p pkey cond =
     in void (send cmd)
 
 -- | Helper function to decode data from the conduit.
-rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t, All2 DynamoEncodable (Code a))
+rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t)
     => (i -> [HashMap T.Text D.AttributeValue]) -> Conduit i m a
 rsDecode trans = CL.mapFoldable trans =$= CL.mapM decoder
   where

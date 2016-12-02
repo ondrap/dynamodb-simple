@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
@@ -88,6 +89,9 @@ instance DynamoScalar BS.ByteString where
   dSetDecode attr = Just $ Set.fromList (attr ^. D.avBS)
 
 -- | Helper pattern
+#if __GLASGOW_HASKELL__ >= 800
+EmptySet :: Set.Set a
+#endif
 pattern EmptySet <- (Set.null -> True)
 
 -- | Typeclass showing that this datatype can be saved to DynamoDB.
@@ -226,7 +230,6 @@ gdFieldNamesNP _ =
     ADT _ _ cs ->
         case hliftA getName cs of
           start :* Nil -> start
-          _ -> error "Cannot happen - gdFieldNamesNP" -- GHC8 actually knows this
     _ -> error "Cannot even patternmatch because of type error"
   where
     getName :: ConstructorInfo xsd -> NP (K T.Text) xsd
