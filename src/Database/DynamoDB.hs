@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 -- |
 -- Module      : Data.DynamoDb
@@ -113,13 +114,14 @@ putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
 putItem item = void $ send (dPutItem item)
 
 -- | Batch write into the database.
-putItemBatch :: forall m a r. (MonadAWS m, DynamoTable a r) => NonEmpty a -> m ()
-putItemBatch items =
+putItemBatch :: forall m a r. (MonadAWS m, DynamoTable a r) => [a] -> m ()
+putItemBatch (nonEmpty -> Just items) =
   let tblname = tableName (Proxy :: Proxy a)
       wrequests = fmap mkrequest items
       mkrequest item = D.writeRequest & D.wrPutRequest .~ Just (D.putRequest & D.prItem .~ gdEncode item)
       cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
   in void $ send cmd
+putItemBatch _ = return ()
 
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r range hash rest.
@@ -146,8 +148,8 @@ instance AWSPager D.BatchGetItem where
 -- it should easily get in the memory, as there is at most 100 items to be sent.
 getItemBatch :: forall m a r range hash rest.
     (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
-    => Consistency -> NonEmpty (PrimaryKey (Code a) r) -> m [a]
-getItemBatch consistency keys = do
+    => Consistency -> [PrimaryKey (Code a) r] -> m [a]
+getItemBatch consistency (nonEmpty -> Just keys) = do
     let tblname = tableName (Proxy :: Proxy a)
         wkaas = fmap (dKeyAndAttr (Proxy :: Proxy a)) keys
         kaas = D.keysAndAttributes wkaas & D.kaaConsistentRead . consistencyL .~ consistency
@@ -155,6 +157,7 @@ getItemBatch consistency keys = do
 
     runConduit $ paginate cmd =$= rsDecode (toListOf (D.bgirsResponses . ix tblname . traverse))
                               =$= CL.consume
+getItemBatch _ _ = return []
 
 -- | Delete item from the database by specifying the primary key.
 deleteItem :: forall m a r hash range rest.
@@ -165,13 +168,14 @@ deleteItem p pkey = void $ send (dDeleteItem p pkey)
 -- | Batch version of 'deleteItem'.
 deleteItemBatch :: forall m a r range hash rest.
     (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> NonEmpty (PrimaryKey (Code a) r) -> m ()
-deleteItemBatch p keys =
+    => Proxy a -> [PrimaryKey (Code a) r] -> m ()
+deleteItemBatch p (nonEmpty -> Just keys) =
   let tblname = tableName p
       wrequests = fmap mkrequest keys
       mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest p key)
       cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
   in void $ send cmd
+deleteItemBatch _ _ = return ()
 
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
