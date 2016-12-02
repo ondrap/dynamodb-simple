@@ -186,7 +186,7 @@ createOrMigrate tabledef = do
             tryMigration tabledef descr
         | otherwise -> throwM (DynamoException "Didn't receive correct table description.")
 
-runMigration :: (DynamoTable table r, MonadAWS m, Code table ~ '[ hash ': range ': rest ])
+runMigration :: (TableCreate table r, MonadAWS m, Code table ~ '[ hash ': range ': rest ])
   =>  Proxy table
   -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])]
   -> D.ProvisionedThroughput

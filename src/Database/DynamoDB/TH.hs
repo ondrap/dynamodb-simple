@@ -49,7 +49,7 @@ import           Database.DynamoDB.Internal
 -- > instance Generic Test
 -- > instance HasDatatypeInfo Test
 -- > instance DynamoCollection Test WithRange IsTable
--- > instance DynamoTable Test WithRange IsTable
+-- > instance DynamoTable Test WithRange
 -- >
 -- > instance Generic TestIndex
 -- > instance HasDatatypeInfo TestIndex
@@ -112,7 +112,7 @@ genBaseCollection coll collrange mparent = do
       Nothing ->
         lift [d|
             instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
-            instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
+            instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange))
              |] >>= tell
       Just parent ->
         lift [d|

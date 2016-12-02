@@ -33,6 +33,7 @@ module Database.DynamoDB.Class (
   , ItemOper(..)
   , TableQuery
   , TableScan
+  , TableCreate(..)
 ) where
 
 import           Control.Lens                     ((.~))
@@ -83,8 +84,7 @@ instance PrimaryFieldCount 'WithRange where
   primaryFieldCount _ = 2
 
 -- | Descritpion of dynamo table
-class (DynamoCollection a r 'IsTable, TableCreate a r)
-       => DynamoTable a (r :: RangeType) | a -> r where
+class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
   default tableName :: (Code a ~ '[ xss ]) => Proxy a -> T.Text
@@ -93,10 +93,6 @@ class (DynamoCollection a r 'IsTable, TableCreate a r)
   -- | Serialize data, put it into the database
   dPutItem :: a -> D.PutItem
   dPutItem = defaultPutItem
-
-  -- |
-  createTable :: Code a ~ '[ hash ': range ': rest ] => Proxy a -> ProvisionedThroughput -> D.CreateTable
-  createTable = iCreateTable
 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
@@ -116,12 +112,12 @@ instance DynamoTable a 'WithRange => ItemOper a 'WithRange where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
 
 -- | Dispatch class for NoRange/WithRange createTable
-class TableCreate a (r :: RangeType) where
-  iCreateTable :: (DynamoTable a r, Code a ~ '[ hash ': range ': xss ]) => Proxy a -> ProvisionedThroughput -> D.CreateTable
-instance TableCreate a 'NoRange where
-  iCreateTable = defaultCreateTable
-instance TableCreate a 'WithRange where
-  iCreateTable = defaultCreateTableRange
+class DynamoTable a r => TableCreate a (r :: RangeType) where
+  createTable :: (Code a ~ '[ hash ': range ': xss ]) => Proxy a -> ProvisionedThroughput -> D.CreateTable
+instance DynamoTable a 'NoRange => TableCreate a 'NoRange where
+  createTable = defaultCreateTable
+instance DynamoTable a 'WithRange => TableCreate a 'WithRange where
+  createTable = defaultCreateTableRange
 
 -- | Instance for tables that can be queried
 class DynamoCollection a 'WithRange t => TableQuery a (t :: TableType) where
@@ -130,7 +126,7 @@ class DynamoCollection a 'WithRange t => TableQuery a (t :: TableType) where
   qIndexName :: Proxy a -> Maybe T.Text
   -- | Create a query using both hash key and operation on range key
   -- On tables without range key, this degrades to queryKey
-  dQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ], RecordOK (Code a) 'WithRange)
+  dQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ])
       => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 instance  (DynamoTable a 'WithRange, DynamoCollection a 'WithRange 'IsTable,
            Code a ~ '[ xs ]) => TableQuery a 'IsTable where
@@ -175,7 +171,7 @@ type family RecordOK (a :: [[*]]) (r :: RangeType) :: Constraint where
 class DynamoCollection a r t
         => DynamoIndex a parent (r :: RangeType) (t :: TableType) | a -> parent r t where
   indexName :: Proxy a -> T.Text
-  default indexName :: (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
+  default indexName :: (Code a ~ '[ xss ]) => Proxy a -> T.Text
   indexName = gdConstrName
 
   createIndex ::
