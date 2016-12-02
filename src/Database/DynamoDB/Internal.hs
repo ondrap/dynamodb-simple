@@ -67,7 +67,7 @@ nameGenPath mkident = foldlM joinParts ("", HMap.empty)
         return (expr <> "." <> ident, attrs <> HMap.singleton ident nm)
     joinParts (expr, attrs) (IntraIndex idx) = return (expr <> "[" <> T.pack (show idx) <> "]", attrs)
 
--- |
+-- | Filter condition. You cannot not touch primary key fields with the filter condition.
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
     | Or (FilterCondition t) (FilterCondition t)

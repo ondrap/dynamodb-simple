@@ -37,11 +37,13 @@ module Database.DynamoDB (
     -- * Data modification
   , putItem
   , putItemBatch
-  , updateItem
+  , updateItemByKey
   , updateItemCond
   , deleteItem
+  , deleteItemByKey
   , deleteItemBatch
   , deleteItemCond
+  , deleteItemCondByKey
 ) where
 
 import           Control.Lens                        (Iso', at, iso, ix,
@@ -159,13 +161,20 @@ getItemBatch consistency (nonEmpty -> Just keys) = do
                               =$= CL.consume
 getItemBatch _ _ = return []
 
--- | Delete item from the database by specifying the primary key.
+-- | Delete item by providing the item; primary key is extracted and
+-- 'deleteItemByKey' is called.
 deleteItem :: forall m a r hash range rest.
     (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> PrimaryKey (Code a) r -> m ()
-deleteItem p pkey = void $ send (dDeleteItem p pkey)
+    => a -> m ()
+deleteItem item = deleteItemByKey (Proxy :: Proxy a) (dItemToKey item)
 
--- | Batch version of 'deleteItem'.
+-- | Delete item from the database by specifying the primary key.
+deleteItemByKey :: forall m a r hash range rest.
+    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    => Proxy a -> PrimaryKey (Code a) r -> m ()
+deleteItemByKey p pkey = void $ send (dDeleteItem p pkey)
+
+-- | Batch version of 'deleteItemByKey'.
 deleteItemBatch :: forall m a r range hash rest.
     (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> [PrimaryKey (Code a) r] -> m ()
@@ -179,15 +188,21 @@ deleteItemBatch _ _ = return ()
 
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
-deleteItemCond :: forall m a r hash range rest.
+deleteItemCondByKey :: forall m a r hash range rest.
     (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
-deleteItemCond p pkey cond =
+deleteItemCondByKey p pkey cond =
     let (expr, attnames, attvals) = dumpCondition cond
         cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
                                  & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
                                  & D.diConditionExpression .~ Just expr
     in void (send cmd)
+
+-- | Primary key is extracted from the item and 'deleteItemCondByKey' is called.
+deleteItemCond :: forall m a r hash range rest.
+    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    => a -> FilterCondition a -> m ()
+deleteItemCond item cond = deleteItemCondByKey (Proxy :: Proxy a) (dItemToKey item) cond
 
 -- | Helper function to decode data from the conduit.
 rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t)
@@ -245,10 +260,10 @@ scanCond consistency cond = do
 -- | Update item in a table
 --
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
-updateItem :: forall a m r hash range rest.
+updateItemByKey :: forall a m r hash range rest.
       (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest ])
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> m ()
-updateItem p pkey actions
+updateItemByKey p pkey actions
   | Just (expr, attnames, attvals) <- dumpActions actions = do
         let cmd = dUpdateItem p pkey  & D.uiUpdateExpression .~ Just expr
                                       & D.uiExpressionAttributeNames %~ (<> attnames)

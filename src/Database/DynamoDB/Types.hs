@@ -48,7 +48,7 @@ import           Data.Maybe                  (catMaybes, mapMaybe)
 import           Data.Proxy
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
-import           Data.Text.Encoding          (decodeUtf8)
+import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import qualified Data.Vector                 as V
 import           Generics.SOP
 import           Network.AWS.DynamoDB.Types  (AttributeValue,
@@ -56,7 +56,7 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
-import Data.Scientific (Scientific, toBoundedInteger, isInteger)
+import Data.Scientific (Scientific, toBoundedInteger, floatingOrInteger, toRealFloat, fromFloatDigits)
 
 
 -- | Exceptions thrown by some dynamodb-simple actions.
@@ -65,9 +65,9 @@ data DynamoException = DynamoException T.Text
 instance Exception DynamoException
 
 data ScalarValue (v :: D.ScalarAttributeType) where
-    ScS :: T.Text -> ScalarValue 'D.S
-    ScN :: Scientific -> ScalarValue 'D.N
-    ScB :: BS.ByteString -> ScalarValue 'D.B
+    ScS :: !T.Text -> ScalarValue 'D.S
+    ScN :: !Scientific -> ScalarValue 'D.N
+    ScB :: !BS.ByteString -> ScalarValue 'D.B
 
 class ScalarAuto (v :: D.ScalarAttributeType) where
   dTypeV :: Proxy v -> ScalarAttributeType
@@ -79,8 +79,8 @@ instance ScalarAuto 'D.S where
   dSetDecodeV attr = Just $ map ScS $ attr ^. D.avSS
 instance ScalarAuto 'D.N where
   dTypeV _ = D.N
-  dSetEncodeV lst = attributeValue & D.avNS .~ map (\(ScN num) -> T.pack (show num)) lst
-  dSetDecodeV attr = traverse (\n -> ScN <$> readMaybe (T.unpack n)) (attr ^. D.avSS)
+  dSetEncodeV lst = attributeValue & D.avNS .~ map (\(ScN num) -> decodeUtf8 (toStrict $ AE.encode num)) lst
+  dSetDecodeV attr = traverse (\n -> ScN <$> AE.decodeStrict (encodeUtf8 n)) (attr ^. D.avSS)
 instance ScalarAuto 'D.B where
   dTypeV _ = D.B
   dSetEncodeV lst = attributeValue & D.avBS .~ map (\(ScB txt) -> txt) lst
@@ -93,7 +93,7 @@ dScalarEncode :: DynamoScalar v a => a -> AttributeValue
 dScalarEncode a =
   case scalarEncode a of
     ScS txt -> attributeValue & D.avS .~ Just txt
-    ScN num -> attributeValue & D.avN .~ Just (T.pack (show num))
+    ScN num -> attributeValue & D.avN .~ Just (decodeUtf8 (toStrict $ AE.encode num))
     ScB bs -> attributeValue & D.avB .~ Just bs
 
 dSetEncode :: DynamoScalar v a => Set.Set a -> AttributeValue
@@ -115,15 +115,35 @@ class (ScalarAuto v, DynamoEncodable a) => DynamoScalar (v :: D.ScalarAttributeT
 
 instance DynamoScalar 'D.N Integer where
   scalarEncode = ScN . fromIntegral
-  scalarDecode (ScN num)
-    | isInteger num = Just $ truncate num
-    | otherwise = Nothing
+  scalarDecode (ScN num) =
+    case floatingOrInteger num :: Either Double Integer of
+        Right x -> Just x
+        Left _  -> Nothing
+
 instance DynamoScalar 'D.N Int where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
+
+instance DynamoScalar 'D.N Word where
+  scalarEncode = ScN . fromIntegral
+  scalarDecode (ScN num) = toBoundedInteger num
+
+-- | Double as a primary key isn't generally a good thing as equality on double
+-- is sometimes a little dodgy. Use scientific instead.
+instance DynamoScalar 'D.N Scientific where
+  scalarEncode = ScN
+  scalarDecode (ScN num) = Just num
+
+-- | Don't use Double as a part of primary key in a table. It is included here
+-- for convenience to be used as a range key in indexes.
+instance DynamoScalar 'D.N Double where
+  scalarEncode = ScN . fromFloatDigits
+  scalarDecode (ScN num) = Just $ toRealFloat num
+
 instance DynamoScalar 'D.S T.Text where
   scalarEncode = ScS
   scalarDecode (ScS txt) = Just txt
+
 instance DynamoScalar 'D.B BS.ByteString where
   scalarEncode = ScB
   scalarDecode (ScB bs) = Just bs
@@ -145,17 +165,25 @@ class DynamoEncodable a where
   dIsMissing :: a -> Bool
   dIsMissing _ = False
 
+instance DynamoEncodable Scientific where
+  dEncode = Just . dScalarEncode
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
+  dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Integer where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Int where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
+  dDecode Nothing = Nothing -- Fail on missing attr
+instance DynamoEncodable Word where
+  dEncode = Just . dScalarEncode
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Double where
   dEncode num = Just $ attributeValue & D.avN .~ (Just $ toShortest num)
-  dDecode (Just attr) = attr ^. D.avN >>= readMaybe . T.unpack
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Bool where
   dEncode b = Just $ attributeValue & D.avBOOL .~ Just b

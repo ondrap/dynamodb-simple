@@ -100,16 +100,19 @@ class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r w
 class DynamoTable a r => ItemOper a (r :: RangeType) where
   dKeyAndAttr :: (Code a ~ '[ hash ': range ': xss ])
             => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
+  dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
 
 instance (DynamoTable a 'NoRange, Code a ~ '[ hash ': xss ],
           DynamoScalar v hash) => ItemOper a 'NoRange where
   dKeyAndAttr p key = HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
+  dItemToKey = gdFirstField
 
 instance (DynamoTable a 'WithRange, Code a ~ '[ hash ': range ': xss ],
           DynamoScalar v1 hash, DynamoScalar v2 range) => ItemOper a 'WithRange where
   dKeyAndAttr p (key, range) = HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
+  dItemToKey = gdTwoFields
 
 -- | Dispatch class for NoRange/WithRange createTable
 class DynamoTable a r => TableCreate a (r :: RangeType) where
@@ -213,6 +216,24 @@ gdRangeField _ =
     getName (Record _ fields) =
         K $ (, Proxy) . (!! 1) $ hcollapse $ hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
     getName _ = error "Only records are supported."
+
+-- | Return first field of a datatype
+gdFirstField :: forall a hash rest. (Generic a, Code a ~ '[ hash ': rest ]) => a -> hash
+gdFirstField item = firstField (from item)
+  where
+    firstField :: (xs ~ '[ hash ': rest ]) => SOP I xs -> hash
+    firstField (SOP (Z (start :* _))) = unI start
+    firstField (SOP (S _)) = error "This cannot happen." -- or the signature is not enough?
+
+-- | Return first 2 fields of a datatype
+gdTwoFields :: forall a hash range rest. (Generic a, Code a ~ '[ hash ': range ': rest ])
+    => a -> (hash, range)
+gdTwoFields item = twoFields (from item)
+  where
+    twoFields :: (xs ~ '[ hash ': range ': rest ]) => SOP I xs -> (hash, range)
+    twoFields (SOP (Z (start :* range :* _))) = (unI start, unI range)
+    twoFields (SOP (S _)) = error "This cannot happen." -- or the signature is not good enough?
+
 
 gdFieldNames :: forall a xss rest. (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ': rest ]) => Proxy a -> NonEmpty T.Text
 gdFieldNames _ =
