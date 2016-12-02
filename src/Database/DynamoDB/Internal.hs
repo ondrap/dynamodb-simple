@@ -154,7 +154,7 @@ rangeOper (RangeGreaterThanE _) n = "#" <> n <> " >= " <> rangeKey
 rangeOper (RangeBetween _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND " <> rangeEnd
 rangeOper (RangeBeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
 
-rangeData :: DynamoScalar a v => RangeOper a -> [(T.Text, AttributeValue)]
+rangeData :: DynamoScalar v a => RangeOper a -> [(T.Text, AttributeValue)]
 rangeData (RangeEquals a) = [(rangeKey, dScalarEncode a)]
 rangeData (RangeLessThan a) = [(rangeKey, dScalarEncode a)]
 rangeData (RangeLessThanE a) = [(rangeKey, dScalarEncode a)]

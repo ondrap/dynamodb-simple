@@ -86,24 +86,24 @@ instance ScalarAuto 'D.B where
   dSetEncodeV lst = attributeValue & D.avBS .~ map (\(ScB txt) -> txt) lst
   dSetDecodeV attr = Just $ map ScB $ attr ^. D.avBS
 
-dType :: forall a v. DynamoScalar a v => Proxy a -> ScalarAttributeType
+dType :: forall a v. DynamoScalar v a => Proxy a -> ScalarAttributeType
 dType _ = dTypeV (Proxy :: Proxy v)
 
-dScalarEncode :: DynamoScalar a v => a -> AttributeValue
+dScalarEncode :: DynamoScalar v a => a -> AttributeValue
 dScalarEncode a =
   case scalarEncode a of
     ScS txt -> attributeValue & D.avS .~ Just txt
     ScN num -> attributeValue & D.avN .~ Just (T.pack (show num))
     ScB bs -> attributeValue & D.avB .~ Just bs
 
-dSetEncode :: DynamoScalar a v => Set.Set a -> AttributeValue
+dSetEncode :: DynamoScalar v a => Set.Set a -> AttributeValue
 dSetEncode vset = dSetEncodeV $ map scalarEncode $ toList vset
 
-dSetDecode :: (Ord a, DynamoScalar a v) => AttributeValue -> Maybe (Set.Set a)
+dSetDecode :: (Ord a, DynamoScalar v a) => AttributeValue -> Maybe (Set.Set a)
 dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.fromList
 
 -- | Typeclass signifying that this is a scalar attribute and can be used as a hash/sort key.
-class (ScalarAuto v, DynamoEncodable a) => DynamoScalar a (v :: D.ScalarAttributeType) | a -> v where
+class (ScalarAuto v, DynamoEncodable a) => DynamoScalar (v :: D.ScalarAttributeType) a | a -> v where
   -- | Scalars must have total encoding function
   scalarEncode :: a -> ScalarValue v
   default scalarEncode :: (Show a, Read a) => a -> ScalarValue 'D.S
@@ -113,18 +113,18 @@ class (ScalarAuto v, DynamoEncodable a) => DynamoScalar a (v :: D.ScalarAttribut
   default scalarDecode :: (Show a, Read a) => ScalarValue 'D.S -> Maybe a
   scalarDecode (ScS txt) = readMaybe (T.unpack txt)
 
-instance DynamoScalar Integer 'D.N where
+instance DynamoScalar 'D.N Integer where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num)
     | isInteger num = Just $ truncate num
     | otherwise = Nothing
-instance DynamoScalar Int 'D.N where
+instance DynamoScalar 'D.N Int where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
-instance DynamoScalar T.Text 'D.S where
+instance DynamoScalar 'D.S T.Text where
   scalarEncode = ScS
   scalarDecode (ScS txt) = Just txt
-instance DynamoScalar BS.ByteString 'D.B where
+instance DynamoScalar 'D.B BS.ByteString where
   scalarEncode = ScB
   scalarDecode (ScB bs) = Just bs
 
@@ -180,7 +180,7 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
-instance (Ord a, DynamoScalar a v) => DynamoEncodable (Set.Set a) where
+instance (Ord a, DynamoScalar v a) => DynamoEncodable (Set.Set a) where
   dEncode (Set.null -> True) = Nothing
   dEncode dta = Just $ dSetEncode dta
   dDecode (Just attr) = dSetDecode attr

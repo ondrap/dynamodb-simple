@@ -105,12 +105,12 @@ mkActionVal (Minus name val) = do
 -- | Type representing an action for updateItem
 type Action t = Maybe (Action' t)
 
-(+=.) :: (InCollection col tbl 'FullPath, DynamoScalar typ v, IsNumber typ)
+(+=.) :: (InCollection col tbl 'FullPath, DynamoScalar v typ, IsNumber typ)
     => Column typ 'TypColumn col -> typ -> Action tbl
 (+=.) col val = Just $ Set (nameGen col) (Plus (nameGen col) (dScalarEncode val))
 infix 4 +=.
 
-(-=.) :: (InCollection col tbl 'FullPath, DynamoScalar typ v, IsNumber typ)
+(-=.) :: (InCollection col tbl 'FullPath, DynamoScalar v typ, IsNumber typ)
     => Column typ 'TypColumn col -> typ -> Action tbl
 (-=.) col val = Just $ Set (nameGen col) (Minus (nameGen col) (dScalarEncode val))
 infix 4 -=.
