@@ -23,7 +23,7 @@ test = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   let newenv = env & configure dynamo & set envLogger lgr
   runResourceT $ runAWS newenv $ do
-      migrate -- Create tables, indices etc.
+      migrate  (provisionedThroughput 5 5) [] -- Create tables, indices etc.
       --
       putItemBatch ((Test "news" "john" "test" 20) :| [])
       --

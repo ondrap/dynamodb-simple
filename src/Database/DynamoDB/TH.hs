@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Template Haskell macros to automatically derive instances, create column datatypes
@@ -141,7 +142,11 @@ getFieldNames tbl = do
       Right lst -> return $ map (over _1 (T.unpack . translateFieldName)) lst
   where
     getRecords :: Info -> Either String [(String, Type)]
+#if __GLASGOW_HASKELL__ >= 800
+    getRecords (TyConI (DataD _ _ _ _ [RecC _ vars] _)) = Right $ map (\(Name (OccName rname) _,_,typ) -> (rname, typ)) vars
+#else
     getRecords (TyConI (DataD _ _ _ [RecC _ vars] _)) = Right $ map (\(Name (OccName rname) _,_,typ) -> (rname, typ)) vars
+#endif
     getRecords _ = Left "not a record declaration with 1 constructor"
 
 toConstrName :: String -> String
@@ -156,7 +161,11 @@ buildColData fieldlist = do
     let constrNames = mkConstrNames fieldlist
     forM_ (zip fieldlist constrNames) $ \((fieldname, ltype), constr) -> do
         let pat = mkName (toPatName fieldname)
+#if __GLASGOW_HASKELL__ >= 800
+        say $ DataD [] constr [] Nothing [] []
+#else
         say $ DataD [] constr [] [] []
+#endif
         lift [d|
             instance ColumnInfo $(pure (ConT constr)) where
                 columnName _ = T.pack fieldname

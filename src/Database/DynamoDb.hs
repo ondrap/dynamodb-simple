@@ -92,19 +92,19 @@ consistencyL = iso tocons fromcons
     fromcons Eventually = Just False
 
 
-dDeleteItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+dDeleteItem :: (ItemOper a r t, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
 dDeleteItem p pkey = D.deleteItem (tableName p) & D.diKey .~ dKeyAndAttr p pkey
 
-dDeleteRequest :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+dDeleteRequest :: (ItemOper a r t, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
 
-dGetItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+dGetItem :: (ItemOper a r t, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
 dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyAndAttr p pkey
 
-dUpdateItem :: (DynamoTable a r t, Code a ~ '[ hash ': range ': xss ])
+dUpdateItem :: (ItemOper a r t, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
 dUpdateItem p pkey = D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
 
@@ -124,7 +124,7 @@ putItemBatch items =
 
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r t range hash rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, ItemOper a r t, Code a ~ '[ hash ': range ': rest])
     => Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
 getItem consistency key = do
   let cmd = dGetItem (Proxy :: Proxy a) key & D.giConsistentRead . consistencyL .~ consistency
@@ -146,7 +146,7 @@ instance AWSPager D.BatchGetItem where
 -- (though amaznoka-dynamodb doesn't have such instance), but fetch the whole result;
 -- it should easily get in the memory, as there is at most 100 items to be sent.
 getItemBatch :: forall m a r t range hash rest.
-    (MonadAWS m, MonadBaseControl IO m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, MonadBaseControl IO m, ItemOper a r t, Code a ~ '[ hash ': range ': rest])
     => Consistency -> NonEmpty (PrimaryKey (Code a) r) -> m [a]
 getItemBatch consistency keys = do
     let tblname = tableName (Proxy :: Proxy a)
@@ -159,13 +159,13 @@ getItemBatch consistency keys = do
 
 -- | Delete item from the database by specifying the primary key.
 deleteItem :: forall m a r t hash range rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, ItemOper a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> m ()
 deleteItem p pkey = void $ send (dDeleteItem p pkey)
 
 -- | Batch version of 'deleteItem'.
 deleteItemBatch :: forall m a r t range hash rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, ItemOper a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> NonEmpty (PrimaryKey (Code a) r) -> m ()
 deleteItemBatch p keys =
   let tblname = tableName p
@@ -177,7 +177,7 @@ deleteItemBatch p keys =
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
 deleteItemCond :: forall m a r t hash range rest.
-    (MonadAWS m, DynamoTable a r t, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, ItemOper a r t, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
 deleteItemCond p pkey cond =
     let (expr, attnames, attvals) = dumpCondition cond
@@ -243,7 +243,7 @@ scanCond consistency cond = do
 --
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItem :: forall a m r hash range rest.
-      (MonadAWS m, DynamoTable a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
+      (MonadAWS m, ItemOper a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> m ()
 updateItem p pkey actions
   | Just (expr, attnames, attvals) <- dumpActions actions = do
@@ -255,7 +255,7 @@ updateItem p pkey actions
 
 -- | Update item in a table while specifying a condition
 updateItemCond :: forall a m r hash range rest.
-      (MonadAWS m, DynamoTable a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
+      (MonadAWS m, ItemOper a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> FilterCondition a -> m ()
 updateItemCond p pkey actions cond
   | Just (expr, attnames, actAttvals) <- dumpActions actions = do
