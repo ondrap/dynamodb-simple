@@ -21,6 +21,7 @@ module Database.DynamoDB.Types (
     -- * Marshalling
   , DynamoEncodable(..)
   , DynamoScalar(..)
+  , ScalarValue(..)
   , IsText(..), IsNumber
     -- * Query datatype
   , RangeOper(..)
@@ -105,7 +106,12 @@ dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.from
 class (ScalarAuto v, DynamoEncodable a) => DynamoScalar a (v :: D.ScalarAttributeType) | a -> v where
   -- | Scalars must have total encoding function
   scalarEncode :: a -> ScalarValue v
+  default scalarEncode :: (Show a, Read a) => a -> ScalarValue 'D.S
+  scalarEncode = ScS . T.pack . show
+
   scalarDecode :: ScalarValue v -> Maybe a
+  default scalarDecode :: (Show a, Read a) => ScalarValue 'D.S -> Maybe a
+  scalarDecode (ScS txt) = readMaybe (T.unpack txt)
 
 instance DynamoScalar Integer 'D.N where
   scalarEncode = ScN . fromIntegral
@@ -126,9 +132,14 @@ instance DynamoScalar BS.ByteString 'D.B where
 class DynamoEncodable a where
   -- | Encode data. Return 'Nothing' if attribute should be omitted.
   dEncode :: a -> Maybe AttributeValue
+  default dEncode :: (Show a, Read a) => a -> Maybe AttributeValue
+  dEncode val = Just $ attributeValue & D.avS .~ (Just $ T.pack $ show val)
   -- | Decode data. Return 'Nothing' on parsing error, gets
   --  'Nothing' on input if the attribute was missing in the database.
   dDecode :: Maybe AttributeValue -> Maybe a
+  default dDecode :: (Show a, Read a) => Maybe AttributeValue -> Maybe a
+  dDecode (Just attr) = attr ^. D.avS >>= (readMaybe . T.unpack)
+  dDecode Nothing = Nothing
   -- | Aid for searching for empty list and hashmap; these can be represented
   -- both by empty list and by missing value, if this returns true, enhance search.
   dIsMissing :: a -> Bool
