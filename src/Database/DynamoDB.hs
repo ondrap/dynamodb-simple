@@ -267,12 +267,16 @@ updateItemCond p pkey actions cond
         void $ send cmd
   | otherwise = return ()
 
+-- | Allow skipping over maybe types when using <.>
+type family UnMaybe a :: * where
+  UnMaybe (Maybe a) = a
+  UnMaybe a = a
 
 -- | Combine attributes from nested structures.
 --
 -- > colAddress <.> colStreet
 (<.>) :: forall typ col1 typ2 col2.
-        (InCollection col2 typ 'NestedPath, ColumnInfo col1, ColumnInfo col2)
+        (InCollection col2 (UnMaybe typ) 'NestedPath, ColumnInfo col1, ColumnInfo col2)
       => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
 (<.>) (Column (a1 :| rest1)) (Column (a2 :| rest2)) = Column (a1 :| rest1 ++ (a2 : rest2))
 -- We need to associate from the right
@@ -292,6 +296,7 @@ infixl 8 <!>
     => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
 (<!:>) (Column (a1 :| rest)) key = Column (a1 :| (rest ++ [IntraName (toText key)]))
 infixl 8 <!:>
+
 
 -- $intro
 --
