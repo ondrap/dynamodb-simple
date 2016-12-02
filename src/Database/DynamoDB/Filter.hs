@@ -21,7 +21,7 @@ module Database.DynamoDB.Filter (
     , size
 ) where
 
-import           Control.Lens               ((.~), (^.))
+import           Control.Lens               ((.~))
 import           Data.Function              ((&))
 import           Data.Maybe                 (fromMaybe)
 import qualified Data.Set                   as Set
@@ -93,8 +93,7 @@ infixr 3 ||.
     -- Hack to have '==. Nothing' correctly working
     Nothing -> AttrMissing (nameGen col)
     -- Hack for '==. ""' or empty set, list, hashmap to work correctly on non-initialized values
-    Just encval | encval ^. D.avNULL == Just True || dIsMissing val ->
-                          AttrMissing (nameGen col) ||. Comparison (nameGen col) "=" encval
+    Just encval | dIsMissing val -> AttrMissing (nameGen col) ||. Comparison (nameGen col) "=" encval
                 | otherwise -> Comparison (nameGen col) "=" encval
 infix 4 ==.
 

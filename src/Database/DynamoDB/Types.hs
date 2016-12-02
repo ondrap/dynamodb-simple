@@ -162,16 +162,16 @@ instance DynamoEncodable Bool where
   dDecode (Just attr) = attr ^. D.avBOOL
   dDecode Nothing = Nothing
 instance DynamoEncodable T.Text where
-  dEncode = Just . dScalarEncode
+  dEncode "" = Nothing
+  dEncode txt = Just (dScalarEncode txt)
   dDecode (Just attr)
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avS
   dDecode Nothing = Just ""
 instance DynamoEncodable BS.ByteString where
-  dEncode = Just . dScalarEncode
-  dDecode (Just attr)
-    | Just True <- attr ^. D.avNULL = Just ""
-    | otherwise = attr ^. D.avB
+  dEncode "" = Nothing
+  dEncode bs = Just (dScalarEncode bs)
+  dDecode (Just attr) = attr ^. D.avB
   dDecode Nothing = Just ""
 
 -- | 'Maybe' ('Maybe' a) will not work well; it will 'join' the value in the database.
