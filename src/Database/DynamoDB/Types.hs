@@ -47,6 +47,7 @@ import qualified Data.HashMap.Strict         as HMap
 import           Data.Maybe                  (catMaybes, mapMaybe)
 import           Data.Proxy
 import qualified Data.Set                    as Set
+import           Data.Tagged                 (Tagged(..), unTagged)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import qualified Data.Vector                 as V
@@ -127,6 +128,11 @@ instance DynamoScalar 'D.N Int where
 instance DynamoScalar 'D.N Word where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
+
+-- | Helper for tagged values
+instance DynamoScalar v a => DynamoScalar v (Tagged x a) where
+  scalarEncode = scalarEncode . unTagged
+  scalarDecode a = Tagged <$> scalarDecode a
 
 -- | Double as a primary key isn't generally a good thing as equality on double
 -- is sometimes a little dodgy. Use scientific instead.
@@ -228,6 +234,11 @@ instance DynamoEncodable a => DynamoEncodable [a] where
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
   dDecode Nothing = Just mempty
   dIsMissing = null
+
+instance DynamoEncodable a => DynamoEncodable (Tagged v a) where
+  dEncode = dEncode . unTagged
+  dDecode a = Tagged <$> dDecode a
+  dIsMissing = dIsMissing . unTagged
 
 -- | Partial encoding/decoding Aeson values. Empty strings get converted to NULL.
 -- This is not a raw API type; if a set is encountered, deserialization fails.
