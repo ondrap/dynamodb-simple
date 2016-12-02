@@ -117,7 +117,7 @@ genBaseCollection coll collrange mparent = do
       Just parent ->
         lift [d|
             instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsIndex
-            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) 'IsIndex
+            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange))
               |] >>= tell
 
     tblFieldNames <- getFieldNames coll
