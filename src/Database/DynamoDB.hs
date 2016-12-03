@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE TemplateHaskell        #-}
 
 -- |
 -- Module      : Data.DynamoDb
@@ -24,31 +25,41 @@ module Database.DynamoDB (
     -- * Data types
     DynamoException(..)
   , Consistency(..)
+  , Direction(..)
   , Column
     -- * Attribute path combinators
     , (<.>), (<!>), (<!:>)
-    -- * Data query
+    -- * Fetching items
   , getItem
   , getItemBatch
-  , queryKey
-  , queryKeyCond
+    -- * Indexed query
+  , querySimple
+  , query
+  , QueryOpts
+  , queryOpts
+  , qConsistentRead, qExclusiveStartKey, qLimit, qDirection, qFilterCondition, qHashKey, qRangeCondition  
+    -- * Data Scan
   , scan
   , scanCond
-    -- * Data modification
+    -- * Data entry
   , putItem
   , putItemBatch
+    -- * Data modification
   , updateItemByKey
   , updateItemCond
+    -- * Deleting data
   , deleteItem
-  , deleteItemByKey
-  , deleteItemBatch
+  , deleteItemBatchByKey
   , deleteItemCond
   , deleteItemCondByKey
+    -- * Utility functions
+  , itemToKey
 ) where
 
 import           Control.Lens                        (Iso', at, iso, ix,
                                                       toListOf, view, (%~),
                                                       (.~), (^.))
+import           Control.Lens.TH                     (makeLenses)
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
 import           Data.Bool                           (bool)
@@ -72,6 +83,7 @@ import qualified Network.AWS.DynamoDB.Scan           as D
 import qualified Network.AWS.DynamoDB.Types          as D
 import qualified Network.AWS.DynamoDB.UpdateItem     as D
 import           Network.AWS.Pager                   (AWSPager (..))
+import           Numeric.Natural                     (Natural)
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
@@ -94,19 +106,19 @@ consistencyL = iso tocons fromcons
     fromcons Eventually = Just False
 
 
-dDeleteItem :: (ItemOper a r, Code a ~ '[ hash ': range ': xss ])
+dDeleteItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
 dDeleteItem p pkey = D.deleteItem (tableName p) & D.diKey .~ dKeyAndAttr p pkey
 
-dDeleteRequest :: (ItemOper a r, Code a ~ '[ hash ': range ': xss ])
+dDeleteRequest :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
 
-dGetItem :: (ItemOper a r, Code a ~ '[ hash ': range ': xss ])
+dGetItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
 dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyAndAttr p pkey
 
-dUpdateItem :: (ItemOper a r, Code a ~ '[ hash ': range ': xss ])
+dUpdateItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
 dUpdateItem p pkey = D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
 
@@ -126,8 +138,8 @@ putItemBatch (nonEmpty -> Just items) =
 putItemBatch _ = return ()
 
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
-getItem :: forall m a r range hash rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+getItem :: forall m a r t range hash rest.
+    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
     => Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
 getItem consistency key = do
   let cmd = dGetItem (Proxy :: Proxy a) key & D.giConsistentRead . consistencyL .~ consistency
@@ -149,7 +161,7 @@ instance AWSPager D.BatchGetItem where
 -- (though amaznoka-dynamodb doesn't have such instance), but fetch the whole result;
 -- it should easily get in the memory, as there is at most 100 items to be sent.
 getItemBatch :: forall m a r range hash rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
     => Consistency -> [PrimaryKey (Code a) r] -> m [a]
 getItemBatch consistency (nonEmpty -> Just keys) = do
     let tblname = tableName (Proxy :: Proxy a)
@@ -164,32 +176,32 @@ getItemBatch _ _ = return []
 -- | Delete item by providing the item; primary key is extracted and
 -- 'deleteItemByKey' is called.
 deleteItem :: forall m a r hash range rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ':  range ': rest ])
     => a -> m ()
-deleteItem item = deleteItemByKey (Proxy :: Proxy a) (dItemToKey item)
+deleteItem item = deleteItemByKey (Proxy :: Proxy a) (itemToKey item)
 
 -- | Delete item from the database by specifying the primary key.
 deleteItemByKey :: forall m a r hash range rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> m ()
 deleteItemByKey p pkey = void $ send (dDeleteItem p pkey)
 
 -- | Batch version of 'deleteItemByKey'.
-deleteItemBatch :: forall m a r range hash rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+deleteItemBatchByKey :: forall m a r range hash rest.
+    (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> [PrimaryKey (Code a) r] -> m ()
-deleteItemBatch p (nonEmpty -> Just keys) =
+deleteItemBatchByKey p (nonEmpty -> Just keys) =
   let tblname = tableName p
       wrequests = fmap mkrequest keys
       mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest p key)
       cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
   in void $ send cmd
-deleteItemBatch _ _ = return ()
+deleteItemBatchByKey _ _ = return ()
 
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
 deleteItemCondByKey :: forall m a r hash range rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
 deleteItemCondByKey p pkey cond =
     let (expr, attnames, attvals) = dumpCondition cond
@@ -200,9 +212,9 @@ deleteItemCondByKey p pkey cond =
 
 -- | Primary key is extracted from the item and 'deleteItemCondByKey' is called.
 deleteItemCond :: forall m a r hash range rest.
-    (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
     => a -> FilterCondition a -> m ()
-deleteItemCond item cond = deleteItemCondByKey (Proxy :: Proxy a) (dItemToKey item) cond
+deleteItemCond item cond = deleteItemCondByKey (Proxy :: Proxy a) (itemToKey item) cond
 
 -- | Helper function to decode data from the conduit.
 rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t)
@@ -214,24 +226,70 @@ rsDecode trans = CL.mapFoldable trans =$= CL.mapM decoder
         Just res -> return res
         Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
--- | Query item in a database using range key.
---   Throws 'DynamoException' if an item cannot be decoded.
-queryKey :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
-  => Consistency -> hash -> Maybe (RangeOper range) -> Source m a
-queryKey consistency key range = do
-    let query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
-    paginate query =$= rsDecode (view D.qrsItems)
+-- | Scan/query direction
+data Direction = Forward | Backward
+  deriving (Show, Eq)
 
--- | Query item in a database, uses filter condition to further filter items server side
-queryKeyCond :: forall a t m hash range rest. (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest])
-  => Consistency -> hash -> Maybe (RangeOper range) -> FilterCondition a -> Source m a
-queryKeyCond consistency key range cond = do
-    let (expr, attnames, attvals) = dumpCondition cond
-        query = dQueryKey (Proxy :: Proxy a) key range & D.qConsistentRead . consistencyL .~ consistency
-                                                       & D.qExpressionAttributeNames %~ (<> attnames)
-                                                       & bool (D.qExpressionAttributeValues %~ (<> attvals)) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
-                                                       & D.qFilterExpression .~ Just expr
-    paginate query =$= rsDecode (view D.qrsItems)
+-- | Options for a generic query
+data QueryOpts a hash range = QueryOpts {
+    _qHashKey :: hash
+  , _qRangeCondition :: Maybe (RangeOper range)
+  , _qFilterCondition :: Maybe (FilterCondition a)
+  , _qConsistentRead :: Consistency
+  , _qDirection :: Direction
+  , _qLimit :: Maybe Natural
+  , _qExclusiveStartKey :: Maybe (hash, range)
+  -- ^ Key at which the evaluation starts. When paging, this should be set to qrsLastEvaluatedKey
+  -- of the last operation and the first item should be dropped (???). The qrsLastEvaluatedKey is
+  -- not currently available in this API.
+}
+makeLenses ''QueryOpts
+-- | Default settings for query options
+queryOpts :: hash -> QueryOpts a hash range
+queryOpts key = QueryOpts key Nothing Nothing Eventually Forward Nothing Nothing
+
+-- | Generic query function. You can query table or indexes that have
+-- a range key defined. The filter condition cannot access the hash and range keys.
+query :: forall a t m v1 v2 hash range rest.
+    (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
+     DynamoScalar v1 hash, DynamoScalar v2 range)
+  => QueryOpts a hash range -> Source m a
+query q = do
+    let cmd = dQueryKey (Proxy :: Proxy a) (q ^. qHashKey) (q ^. qRangeCondition)
+                  & D.qConsistentRead . consistencyL .~ (q ^. qConsistentRead)
+                  & D.qScanIndexForward .~ Just (q ^. qDirection == Forward)
+                  & D.qLimit .~ (q ^. qLimit)
+                  & addStartKey (q ^. qExclusiveStartKey)
+                  & addCondition (q ^. qFilterCondition)
+    paginate cmd =$= rsDecode (view D.qrsItems)
+  where
+    addCondition Nothing = id
+    addCondition (Just cond) =
+      let (expr, attnames, attvals) = dumpCondition cond
+      in (D.qExpressionAttributeNames %~ (<> attnames))
+           -- HACK; https://github.com/brendanhay/amazonka/issues/332
+         . bool (D.qExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+         . (D.qFilterExpression .~ Just expr)
+    addStartKey Nothing = id
+    addStartKey (Just (key, range)) =
+        D.qExclusiveStartKey .~ dKeyAndAttr (Proxy :: Proxy a) (key, range)
+
+-- | Query item in a database using range key.
+--
+-- Simple to use function to query limited amount of data from database.
+--
+-- Throws 'DynamoException' if an item cannot be decoded.
+querySimple :: forall a t v1 v2 m hash range rest.
+  (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
+   DynamoScalar v1 hash, DynamoScalar v2 range)
+  => hash        -- ^ Hash key
+  -> Maybe (RangeOper range) -- ^ Range condition
+  -> Natural -- ^ Maximum number of items to fetch
+  -> m [a]
+querySimple key range limit = do
+  let opts = queryOpts key & qRangeCondition .~ range
+                           & qLimit .~ Just limit
+  runConduit $ query opts =$= CL.consume
 
 -- | Read full contents of a table or index.
 --
@@ -261,7 +319,7 @@ scanCond consistency cond = do
 --
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItemByKey :: forall a m r hash range rest.
-      (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest ])
+      (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> m ()
 updateItemByKey p pkey actions
   | Just (expr, attnames, attvals) <- dumpActions actions = do
@@ -273,7 +331,7 @@ updateItemByKey p pkey actions
 
 -- | Update item in a table while specifying a condition
 updateItemCond :: forall a m r hash range rest.
-      (MonadAWS m, ItemOper a r, Code a ~ '[ hash ': range ': rest ])
+      (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
     => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> FilterCondition a -> m ()
 updateItemCond p pkey actions cond
   | Just (expr, attnames, actAttvals) <- dumpActions actions = do

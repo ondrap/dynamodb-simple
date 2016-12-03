@@ -1,0 +1,13 @@
+resolver: lts-7.11
+packages:
+  - '.'
+  - '../..'
+flags: {}
+
+# Extra package databases containing global packages
+extra-package-dbs: []
+
+# Allow a newer minor version of GHC than the snapshot specifies
+# compiler-check: newer-minor
+extra-deps:
+  - monad-supply-0.6

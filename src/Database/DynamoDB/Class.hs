@@ -29,11 +29,11 @@ module Database.DynamoDB.Class (
   , gdDecode
   , translateFieldName
   , PrimaryKey
-  , ItemOper(..)
   , TableQuery
   , TableScan
   , TableCreate(..)
   , IndexCreate(..)
+  , HasPrimaryKey(..)
 ) where
 
 import           Control.Lens                     ((.~))
@@ -74,12 +74,31 @@ class (Generic a, HasDatatypeInfo a, PrimaryFieldCount r, All2 DynamoEncodable (
     where
       (key :| rest) = gdFieldNames (Proxy :: Proxy a)
 
+
+
 class PrimaryFieldCount (r :: RangeType) where
   primaryFieldCount :: Proxy r -> Int
 instance PrimaryFieldCount 'NoRange where
   primaryFieldCount _ = 1
 instance PrimaryFieldCount 'WithRange where
   primaryFieldCount _ = 2
+
+class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType) where
+  itemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
+  dKeyAndAttr :: (Code a ~ '[ hash ': range ': xss ])
+            => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
+
+instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
+          DynamoScalar v hash) => HasPrimaryKey a 'NoRange t where
+  itemToKey = gdFirstField
+  dKeyAndAttr p key = HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
+
+instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
+          DynamoScalar v1 hash, DynamoScalar v2 range) => HasPrimaryKey a 'WithRange t where
+  itemToKey = gdTwoFields
+  dKeyAndAttr p (key, range) = HMap.fromList plist
+    where
+      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
 
 -- | Descritpion of dynamo table
 class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r where
@@ -94,25 +113,6 @@ class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r w
 
   deleteTable :: Proxy a -> D.DeleteTable
   deleteTable p = D.deleteTable (tableName p)
-
-
--- | Dispatch class for NoRange/WithRange deleteItem
-class DynamoTable a r => ItemOper a (r :: RangeType) where
-  dKeyAndAttr :: (Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
-  dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
-
-instance (DynamoTable a 'NoRange, Code a ~ '[ hash ': xss ],
-          DynamoScalar v hash) => ItemOper a 'NoRange where
-  dKeyAndAttr p key = HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
-  dItemToKey = gdFirstField
-
-instance (DynamoTable a 'WithRange, Code a ~ '[ hash ': range ': xss ],
-          DynamoScalar v1 hash, DynamoScalar v2 range) => ItemOper a 'WithRange where
-  dKeyAndAttr p (key, range) = HMap.fromList plist
-    where
-      plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
-  dItemToKey = gdTwoFields
 
 -- | Dispatch class for NoRange/WithRange createTable
 class DynamoTable a r => TableCreate a (r :: RangeType) where
