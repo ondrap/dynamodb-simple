@@ -182,7 +182,6 @@ main = do
         (items :: [ArticleIndex]) <- querySimple (Tagged "Comedy") Nothing Backward 10
         forM_ items (liftIO . print)
 
-      -- Scan
+      -- Scan with condition
       -- Update
       -- Delete
-      

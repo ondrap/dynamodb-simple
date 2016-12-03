@@ -107,7 +107,7 @@ getItemBatch consistency = go []
           Just res -> return res
           Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
-dDeleteRequest :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
+dDeleteRequest :: (HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
 

@@ -241,7 +241,6 @@ instance DynamoEncodable a => DynamoEncodable (Tagged v a) where
   dIsMissing = dIsMissing . unTagged
 
 -- | Partial encoding/decoding Aeson values. Empty strings get converted to NULL.
--- This is not a raw API type; if a set is encountered, deserialization fails.
 instance DynamoEncodable AE.Value where
   dEncode (AE.Object obj) = dEncode obj
   dEncode (AE.Array lst) = dEncode (toList lst)
