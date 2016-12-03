@@ -176,3 +176,7 @@ consistencyL = iso tocons fromcons
     tocons _ = Eventually
     fromcons Strongly = Just True
     fromcons Eventually = Just False
+
+-- | Scan/query direction
+data Direction = Forward | Backward
+  deriving (Show, Eq)

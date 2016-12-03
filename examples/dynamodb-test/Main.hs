@@ -1,51 +1,54 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE EmptyDataDecls        #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving       #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE EmptyDataDecls             #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
-{-# LANGUAGE FlexibleInstances       #-}
-{-# LANGUAGE GADTs       #-}
 
 -- {-# LANGUAGE DuplicateRecordFields #-}
 
 module Main where
-import           Control.Lens             (Iso', iso, set, (%~), (.~), (^.))
-import           Control.Monad.IO.Class   (MonadIO, liftIO)
-import Control.Monad (forM_)
-import           Data.Conduit             (runConduit, (=$=))
-import qualified Data.Conduit.List        as CL
-import           Data.Function            ((&))
-import           Data.HashMap.Strict      (HashMap)
-import qualified Data.HashMap.Strict      as HMap
+import           Control.Lens               (Iso', iso, set, (%~), (.~), (^.))
+import           Control.Monad              (forM_)
+import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import           Data.Conduit               (runConduit, (=$=))
+import qualified Data.Conduit.List          as CL
+import           Data.Function              ((&))
+import           Data.HashMap.Strict        (HashMap)
+import qualified Data.HashMap.Strict        as HMap
 import           Data.List.NonEmpty
 import           Data.Proxy
-import qualified Data.Set                 as Set
+import           Data.Scientific            (toBoundedInteger)
+import qualified Data.Set                   as Set
 import           Data.Tagged
-import qualified Data.Text                as T
-import qualified Data.Text.IO             as T
-import           Data.Time.Clock          (UTCTime, getCurrentTime, NominalDiffTime, addUTCTime)
-import           Data.UUID (UUID)
-import qualified Data.UUID as UUID
-import Data.UUID.V4 (nextRandom)
-import qualified GHC.Generics             as GHC
+import qualified Data.Text                  as T
+import qualified Data.Text.IO               as T
+import           Data.Time.Clock            (NominalDiffTime, UTCTime,
+                                             addUTCTime, getCurrentTime)
+import           Data.Time.Clock.POSIX      (POSIXTime, posixSecondsToUTCTime,
+                                             utcTimeToPOSIXSeconds)
+import           Data.UUID                  (UUID)
+import qualified Data.UUID                  as UUID
+import           Data.UUID.V4               (nextRandom)
+import qualified GHC.Generics               as GHC
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB, provisionedThroughput)
-import   qualified  Network.AWS.DynamoDB.Types  as D
-import           System.Environment       (setEnv)
-import           System.IO                (stdout)
-import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime, POSIXTime)
-import Data.Scientific (toBoundedInteger)
+import           Network.AWS.DynamoDB       (dynamoDB, provisionedThroughput)
+import qualified Network.AWS.DynamoDB.Types as D
+import           System.Environment         (setEnv)
+import           System.IO                  (stdout)
 
 import           Database.DynamoDB
 import           Database.DynamoDB.Filter
 import           Database.DynamoDB.TH
 import           Database.DynamoDB.Types
 import           Database.DynamoDB.Update
+
 
 -- Haskell datatype instances
 instance DynamoEncodable UUID where
@@ -145,8 +148,17 @@ genArticles = do
       let published = (\days -> (day * days) `addUTCTime` now) <$> mdays
       return $ Article artuuid title category published (autUuid author) author coauthor tags
 
+withLog :: MonadIO m => T.Text -> m () -> m ()
+withLog msg code = do
+  logmsg "---------------------------------------"
+  logmsg msg
+  logmsg "---------------------------------------"
+  code
+  logmsg ""
+
 main :: IO ()
 main = do
+  -- We don't need this for accessing local dynamodb instance, but newEnv complains if the environment is not set
   setEnv "AWS_ACCESS_KEY_ID" "XXXXXXXXXXXXXX"
   setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
 
@@ -159,16 +171,18 @@ main = do
       -- Create tables; provisionedThroughput for indexes is some low default
       migrateTables (provisionedThroughput 5 5) []
 
-      logmsg "Entring some data"
-      genArticles >>= putItemBatch
-      logmsg "----------------------------------------"
+      withLog "Entring some data" $
+        genArticles >>= putItemBatch
 
-      logmsg "Querying published news articles"
-      (items :: [ArticleIndex]) <- querySimple (Tagged "News") Nothing 10
-      forM_ items (liftIO . print)
-      logmsg "----------------------------------------"
+      withLog "Querying published news articles" $ do
+        (items :: [ArticleIndex]) <- querySimple (Tagged "News") Nothing Forward 10
+        forM_ items (liftIO . print)
 
-      logmsg "Querying published comedy articles"
-      (items :: [ArticleIndex]) <- querySimple (Tagged "Comedy") Nothing 10
-      forM_ items (liftIO . print)
-      logmsg "----------------------------------------"
+      withLog "Querying published comedy articles with condition" $ do
+        (items :: [ArticleIndex]) <- querySimple (Tagged "Comedy") Nothing Backward 10
+        forM_ items (liftIO . print)
+
+      -- Scan
+      -- Update
+      -- Delete
+      

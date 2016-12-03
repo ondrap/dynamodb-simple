@@ -70,8 +70,9 @@ chunkBatch limit = (,) <$> take limit <*> drop limit
 -- | Batch write into the database.
 --
 -- The batch is divided to 25-item chunks, each is sent and retried separately.
--- If a batch fails on dynamodb exception, it is raised. The information about
--- which items were saved is currently unavailable.
+-- If a batch fails on dynamodb exception, it is raised.
+--
+-- TODO: Note: On exception, the information about which items were saved is unavailable
 putItemBatch :: forall m a r. (MonadAWS m, DynamoTable a r) => [a] -> m ()
 putItemBatch (chunkBatch 25 -> (nonEmpty -> Just items, rest)) = do
     let tblname = tableName (Proxy :: Proxy a)
@@ -111,6 +112,9 @@ dDeleteRequest :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
 
 -- | Batch version of 'deleteItemByKey'.
+--
+-- Note: Because the requests are chunked, the information about which items
+-- were deleted in case of exception is unavailable.
 deleteItemBatchByKey :: forall m a r range hash rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> [PrimaryKey (Code a) r] -> m ()
