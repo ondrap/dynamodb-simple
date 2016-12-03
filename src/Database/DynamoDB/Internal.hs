@@ -21,6 +21,7 @@ import           Data.Proxy
 import qualified Data.Text                  as T
 import           Network.AWS.DynamoDB.Types (AttributeValue)
 import qualified Network.AWS.DynamoDB.Types as D
+import qualified Data.Semigroup as SEMI
 
 import           Database.DynamoDB.Types
 
@@ -80,6 +81,9 @@ data FilterCondition t =
     | Contains NameGen D.AttributeValue
     | Between NameGen D.AttributeValue D.AttributeValue
     | In NameGen [D.AttributeValue]
+
+instance SEMI.Semigroup (FilterCondition t) where
+  (<>) = And
 
 -- | Return filter expression, attribute name map and attribute value map
 dumpCondition :: FilterCondition t -> (T.Text, HashMap T.Text T.Text, HashMap T.Text D.AttributeValue)
