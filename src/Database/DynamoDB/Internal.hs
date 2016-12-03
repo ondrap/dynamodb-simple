@@ -10,6 +10,7 @@
 
 module Database.DynamoDB.Internal where
 
+import           Control.Lens               (Iso', iso)
 import           Control.Monad.Supply       (Supply, evalSupply, supply)
 import           Data.Foldable              (foldlM)
 import           Data.HashMap.Strict        (HashMap)
@@ -162,3 +163,16 @@ rangeData (RangeGreaterThan a) = [(rangeKey, dScalarEncode a)]
 rangeData (RangeGreaterThanE a) = [(rangeKey, dScalarEncode a)]
 rangeData (RangeBetween s e) = [(rangeStart, dScalarEncode s), (rangeEnd, dScalarEncode e)]
 rangeData (RangeBeginsWith a) = [(rangeKey, dScalarEncode a)]
+
+-- | Parameter for queries involving read consistency settings.
+data Consistency = Eventually | Strongly
+  deriving (Show)
+
+-- | Lens to help set consistency.
+consistencyL :: Iso' (Maybe Bool) Consistency
+consistencyL = iso tocons fromcons
+  where
+    tocons (Just True) = Strongly
+    tocons _ = Eventually
+    fromcons Strongly = Just True
+    fromcons Eventually = Just False
