@@ -50,10 +50,9 @@ module Database.DynamoDB (
   , updateItemByKey
   , updateItemCond
     -- * Deleting data
-  , deleteItem
-  , deleteItemBatchByKey
-  , deleteItemCond
+  , deleteItemByKey
   , deleteItemCondByKey
+  , deleteItemBatchByKey
     -- * Delete table
   , deleteTable
     -- * Utility functions
@@ -117,13 +116,6 @@ getItem consistency key = do
               Just res -> return (Just res)
               Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
 
--- | Delete item by providing the item; primary key is extracted and
--- 'deleteItemByKey' is called.
-deleteItem :: forall m a r hash range rest.
-    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ':  range ': rest ])
-    => a -> m ()
-deleteItem item = deleteItemByKey (Proxy :: Proxy a) (itemToKey item)
-
 -- | Delete item from the database by specifying the primary key.
 deleteItemByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
@@ -141,13 +133,6 @@ deleteItemCondByKey p pkey cond =
                                  & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
                                  & D.diConditionExpression .~ Just expr
     in void (send cmd)
-
--- | Primary key is extracted from the item and 'deleteItemCondByKey' is called.
-deleteItemCond :: forall m a r hash range rest.
-    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
-    => a -> FilterCondition a -> m ()
-deleteItemCond item cond = deleteItemCondByKey (Proxy :: Proxy a) (itemToKey item) cond
-
 
 -- | Update item in a table
 --
