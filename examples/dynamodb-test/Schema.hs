@@ -65,7 +65,7 @@ data Author = Author {
   , autLastName  :: T.Text
   , autGender    :: Gender
 } deriving (Show, GHC.Generic)
-$(deriveCollection ''Author)
+deriveCollection ''Author
 
 data Article = Article {
     artUuid       :: ArticleUUID
@@ -93,4 +93,4 @@ data AuthorIndex = AuthorIndex {
   , a_artTags       :: Set.Set Tag
 } deriving (Show, GHC.Generic)
 
-$(mkTableDefs "migrateTables" (''Article, NoRange) [(''ArticleIndex, WithRange), (''AuthorIndex, WithRange)])
+mkTableDefs "migrateTables" (''Article, NoRange) [(''ArticleIndex, WithRange), (''AuthorIndex, WithRange)]

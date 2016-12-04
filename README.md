@@ -14,7 +14,7 @@ data Test = Test {
   , subject  :: T.Text
   , replies  :: Int
 } deriving (Show, GHC.Generic)
-$(mkTableDefs "migrate" (''Test, WithRange) [])
+mkTableDefs "migrate" (''Test, WithRange) []
 
 test :: IO ()
 test = do
