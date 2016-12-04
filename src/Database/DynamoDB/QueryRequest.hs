@@ -4,10 +4,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
 {-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 module Database.DynamoDB.QueryRequest (
+  -- * Query
     query
   , querySimple
+  , queryCond
+  , querySource
+  -- * Scan
   , scan
   , scanCond
   , QueryOpts
@@ -57,10 +63,10 @@ data QueryOpts a hash range = QueryOpts {
   , _qFilterCondition :: Maybe (FilterCondition a)
   , _qConsistentRead :: Consistency
   , _qDirection :: Direction
-  , _qLimit :: Maybe Natural
+  , _qLimit :: Maybe Natural -- ^ This sets the "D.qLimit" settings for maximum number of evaluated items
   , _qExclusiveStartKey :: Maybe (hash, range)
   -- ^ Key at which the evaluation starts. When paging, this should be set to qrsLastEvaluatedKey
-  -- of the last operation and the first item should be dropped (???). The qrsLastEvaluatedKey is
+  -- of the last operation and the first item should be dropped (??? or not ???). The qrsLastEvaluatedKey is
   -- not currently available in this API.
 }
 makeLenses ''QueryOpts
@@ -115,10 +121,25 @@ querySimple :: forall a t v1 v2 m hash range rest.
   -> m [a]
 querySimple key range direction limit = do
   let opts = queryOpts key & qRangeCondition .~ range
-                           & qLimit .~ Just (fromIntegral limit)
                            & qDirection .~ direction
-  -- TODO: we should have a different paging strategy and adjust qLimit as
-  -- the items are consumed
+                           -- Without the condition, the number of processed and returned items
+                           -- should be roughly the same
+                           & qLimit .~ Just (fromIntegral limit)
+  runConduit $ querySource opts =$= CL.take limit
+
+queryCond :: forall a t v1 v2 m hash range rest.
+  (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
+   DynamoScalar v1 hash, DynamoScalar v2 range)
+  => hash        -- ^ Hash key
+  -> Maybe (RangeOper range) -- ^ Range condition
+  -> FilterCondition a
+  -> Direction -- ^ Scan direction
+  -> Int -- ^ Maximum number of items to fetch
+  -> m [a]
+queryCond key range cond direction limit = do
+  let opts = queryOpts key & qRangeCondition .~ range
+                           & qDirection .~ direction
+                           & qFilterCondition .~ Just cond
   runConduit $ querySource opts =$= CL.take limit
 
 query :: forall a t v1 v2 m hash range rest.
@@ -127,11 +148,11 @@ query :: forall a t v1 v2 m hash range rest.
   => QueryOpts a hash range -- ^ Consistency of the read
   -> Int -- ^ Maximum number of items to fetch
   -> m [a]
-query custopts limit = do
-  let opts = custopts & qLimit .~ Just (fromIntegral limit)
-  -- TODO: we should have a different paging strategy and adjust qLimit as
-  -- the items are consumed
-  runConduit $ querySource opts =$= CL.take limit
+query opts limit = runConduit $ querySource opts =$= CL.take limit
+
+data ScanOpts a = ScanOpts {
+
+}
 
 -- | Read full contents of a table or index.
 --

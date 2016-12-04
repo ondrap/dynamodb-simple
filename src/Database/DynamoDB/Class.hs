@@ -111,9 +111,6 @@ class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r w
   dPutItem :: a -> D.PutItem
   dPutItem = defaultPutItem
 
-  deleteTable :: Proxy a -> D.DeleteTable
-  deleteTable p = D.deleteTable (tableName p)
-
 -- | Dispatch class for NoRange/WithRange createTable
 class DynamoTable a r => TableCreate a (r :: RangeType) where
   createTable :: (Code a ~ '[ hash ': range ': xss ]) => Proxy a -> ProvisionedThroughput -> D.CreateTable

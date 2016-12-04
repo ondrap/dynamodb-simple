@@ -33,8 +33,10 @@ module Database.DynamoDB (
   , getItem
   , getItemBatch
     -- * Indexed query
-  , querySimple
   , query
+  , querySimple
+  , queryCond
+  , querySource
   , QueryOpts
   , queryOpts
   , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition
@@ -52,6 +54,8 @@ module Database.DynamoDB (
   , deleteItemBatchByKey
   , deleteItemCond
   , deleteItemCondByKey
+    -- * Delete table
+  , deleteTable
     -- * Utility functions
   , itemToKey
 ) where
@@ -71,6 +75,7 @@ import           Network.AWS
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
 import qualified Network.AWS.DynamoDB.UpdateItem     as D
+import qualified Network.AWS.DynamoDB.DeleteTable    as D
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
@@ -172,6 +177,9 @@ updateItemCond p pkey actions cond
                                       & bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
         void $ send cmd
   | otherwise = return ()
+
+deleteTable :: (MonadAWS m, DynamoTable a r) => Proxy a -> m ()
+deleteTable p = void $ send (D.deleteTable (tableName p))
 
 -- | Allow skipping over maybe types when using <.>
 type family UnMaybe a :: * where

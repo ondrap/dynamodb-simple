@@ -43,7 +43,7 @@ test = do
   parametrizing the DynamoCollection or DynamoTable class.
 - Table name is hardcoded; this would be easy to solve in TH.
 - You cannot compare attributes between themselves (i.e. `colCurrentAccount >=. colAverageAccount`).
-  This would be possible with a different set of operators, it might be possible with overloading the current operators. Does anybody need it?
+  I'm not sure this would be currently technically possible. Does anybody need it?
 
 ### Handling of NULLs
 
