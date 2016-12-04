@@ -4,6 +4,7 @@
 -- {-# LANGUAGE DuplicateRecordFields #-}
 
 module Main where
+
 import           Control.Exception.Safe   (catchAny)
 import           Control.Lens             (set)
 import           Control.Monad            (forM_)
@@ -67,7 +68,10 @@ main = do
       withLog "Simple scan unpublished articles" $ do
         (items :: [Article]) <- scanCond (colArtPublished ==. Nothing) 10
         forM_ items (liftIO . print)
+
       -- Update
+
+
       -- Delete
 
 logmsg :: MonadIO m => T.Text -> m ()

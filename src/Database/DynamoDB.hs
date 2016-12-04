@@ -5,8 +5,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
-{-# LANGUAGE ViewPatterns        #-}
-{-# LANGUAGE TemplateHaskell        #-}
 
 -- |
 -- Module      : Data.DynamoDb
@@ -48,6 +46,7 @@ module Database.DynamoDB (
     -- * Data entry
   , putItem
   , putItemBatch
+  , insertItem
     -- * Data modification
   , updateItemByKey
   , updateItemCond
@@ -75,8 +74,11 @@ import           Generics.SOP
 import           Network.AWS
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D
+import qualified Network.AWS.DynamoDB.PutItem        as D
 import qualified Network.AWS.DynamoDB.UpdateItem     as D
 import qualified Network.AWS.DynamoDB.DeleteTable    as D
+import           Data.Foldable (toList)
+import qualified Data.HashMap.Strict                 as HMap
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
@@ -100,9 +102,22 @@ dUpdateItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ':
 dUpdateItem p pkey = D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
 
 
--- | Write item into the database.
+-- | Write item into the database; overwrite any previously existing
 putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
 putItem item = void $ send (dPutItem item)
+
+-- | Write item into the database only if it didn't exist
+insertItem  :: forall a r m hash range rest.
+    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest]) => a -> m ()
+insertItem item = do
+  -- TODO: This is a little hacky; should use type-safe condition, but that would need more infrastructure
+  let origcmd = dPutItem item
+      keyfields = toList $ primaryFields (Proxy :: Proxy a)
+      expr = T.intercalate " AND " $ map (\t -> "attribute_not_exists(#" <> t <> ")") keyfields
+      cmd = origcmd & D.piExpressionAttributeNames .~ HMap.fromList (map (\a -> ("#"<> a, a)) keyfields)
+                    & D.piConditionExpression .~ Just expr
+  void $ send cmd
+
 
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r range hash rest.

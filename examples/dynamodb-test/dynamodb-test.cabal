@@ -10,8 +10,7 @@ cabal-version:       >=1.10
 
 executable dynamodb-test
   main-is:             Main.hs
-  -- other-modules:
-  -- other-extensions:
+  other-modules:       Schema
   build-depends:       base >=4.8 && <5,
                        dynamodb-simple, amazonka, bytestring, text, uuid, transformers,
                        containers, lens, semigroups, conduit, unordered-containers,
