@@ -3,7 +3,7 @@
 [![Build Status](https://travis-ci.org/ondrap/dynamodb-simple.svg?branch=master)](https://travis-ci.org/ondrap/dynamodb-simple) [![Hackage](https://img.shields.io/hackage/v/dynamodb-simple.svg)](https://hackage.haskell.org/package/dynamodb-simple)
 
 This library intends to simplify working with DynamoDB AWS database.
-It uses Generics code (using generics-sop) on top of your structures
+It uses Generics code ([generics-sop](https://hackage.haskell.org/package/generics-sop)) on top of your structures
 and just by adding a few instances allows you to easily generate AWS
 commands.
 
@@ -14,7 +14,7 @@ data Test = Test {
   , subject  :: T.Text
   , replies  :: Int
 } deriving (Show, GHC.Generic)
-$(mkTableDefs "migrate" (''Test, True) [])
+$(mkTableDefs "migrate" (''Test, WithRange) [])
 
 test :: IO ()
 test = do
@@ -25,23 +25,41 @@ test = do
   runResourceT $ runAWS newenv $ do
       migrate  (provisionedThroughput 5 5) [] -- Create tables, indices etc.
       --
-      putItemBatch ((Test "news" "john" "test" 20) :| [])
+      putItem (Test "news" "john" "test" 20)
       --
-      item <- getItem Eventually ("news", "john")
-      liftIO $ print (item :: Maybe Test)
+      (item :: Maybe Test) <- getItem Eventually ("news", "john")
+      liftIO $ print item
       --
-      runConduit $
-          scanCond Eventually (colReplies >. 15)
-            =$= CL.mapM_ (\(i :: Test) -> liftIO (print i))
+      (items :: [Test]) <- scanCond (colReplies >. 15)
+      liftIO $ print items
 ````
+### Features
+
+- Global secondary indexes.
+- Tables with only hash keys as well as tables with combined hash and sort key.
+- Sparse indexes (define the column as `Maybe` in a table, omit the `Maybe` in index definition).
+- Standard datatypes including `Tagged` and basic default instances for data types supporting
+  `Show/Read`.
+- New types can be added easily.
+- High-level, easy-to-use API - hides intricacies of both DynamoDB and amazonka library.
+- Type-safe conditions, including nested structures.
+- Type-safe update actions.
+- Template-haskell macro to easily create all relevant instances.
+- 'Schema migration' - upon startup checks if the database schema matches the definition
+  and, if possible, adjusts the database.
+- Automatic handling of invalid values (empty strings, empty sets). Automatic rewriting of
+  queries when searching for these empty values.
+
+### What is planned
+
+- Local secondary index
+- Table name customization.
+- Translation of field names to attribute names.
+- Support for automatic versioning of fields.
 
 ### Limitations
 
-- Local secondary index are not supported. It could be probably supported similarly to the global secondary indexes.
 - Projections are not supported. Using some generic programming on tuples it should be possible.
-- Translation of field names to attribute names is hardcoded. It might be possible to parametrize it by
-  parametrizing the DynamoCollection or DynamoTable class.
-- Table name is hardcoded; this would be easy to solve in TH.
 - You cannot compare attributes between themselves (i.e. `colCurrentAccount >=. colAverageAccount`).
   I'm not sure this would be currently technically possible. Does anybody need it?
 
@@ -62,7 +80,7 @@ Empty string and empty set are represented by omitting the value.
   empty `String` or `Set`.
 * In case of schema change, `Maybe` columns are considered `Nothing`.
 * In case of schema change, `String` columns are decoded as empty strings, `Set` columns
-  as empty sets.
+  as empty sets, `[a]` columns as empty lists.
 * Condition for `== ""`, `== []` etc. is automatically enhanced to account for non-existent attributes
   (i.e. after schema change).
 * Empty list/empty hashmap is represented as empty list/hashmap; however it is allowed to be decoded

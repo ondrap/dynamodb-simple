@@ -83,18 +83,18 @@ instance PrimaryFieldCount 'WithRange where
   primaryFieldCount _ = 2
 
 class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType) where
-  itemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
+  dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
   dKeyAndAttr :: (Code a ~ '[ hash ': range ': xss ])
             => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
 
 instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
           DynamoScalar v hash) => HasPrimaryKey a 'NoRange t where
-  itemToKey = gdFirstField
+  dItemToKey = gdFirstField
   dKeyAndAttr p key = HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
 
 instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
           DynamoScalar v1 hash, DynamoScalar v2 range) => HasPrimaryKey a 'WithRange t where
-  itemToKey = gdTwoFields
+  dItemToKey = gdTwoFields
   dKeyAndAttr p (key, range) = HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]

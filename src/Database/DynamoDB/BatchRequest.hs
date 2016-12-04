@@ -72,7 +72,7 @@ chunkBatch limit = (,) <$> take limit <*> drop limit
 -- The batch is divided to 25-item chunks, each is sent and retried separately.
 -- If a batch fails on dynamodb exception, it is raised.
 --
--- TODO: Note: On exception, the information about which items were saved is unavailable
+-- Note: On exception, the information about which items were saved is unavailable
 putItemBatch :: forall m a r. (MonadAWS m, DynamoTable a r) => [a] -> m ()
 putItemBatch (chunkBatch 25 -> (nonEmpty -> Just items, rest)) = do
     let tblname = tableName (Proxy :: Proxy a)
@@ -84,9 +84,7 @@ putItemBatch (chunkBatch 25 -> (nonEmpty -> Just items, rest)) = do
 putItemBatch _ = return ()
 
 
--- | Get batch of items. Run the command using pager
--- (though amaznoka-dynamodb doesn't have such instance), but fetch the whole result;
--- it should easily get in the memory, as there is at most 100 items to be sent.
+-- | Get batch of items. 
 getItemBatch :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
     => Consistency -> [PrimaryKey (Code a) r] -> m [a]

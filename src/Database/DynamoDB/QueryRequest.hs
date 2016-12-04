@@ -62,7 +62,7 @@ rsDecode trans = CL.mapFoldable trans =$= CL.mapM decoder
         Just res -> return res
         Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
--- | Options for a generic query
+-- | Options for a generic query.
 data QueryOpts a hash range = QueryOpts {
     _qHashKey :: hash
   , _qRangeCondition :: Maybe (RangeOper range)
@@ -76,7 +76,7 @@ data QueryOpts a hash range = QueryOpts {
   -- not currently available in this API.
 }
 makeLenses ''QueryOpts
--- | Default settings for query options
+-- | Default settings for query options.
 queryOpts :: hash -> QueryOpts a hash range
 queryOpts key = QueryOpts key Nothing Nothing Eventually Forward Nothing Nothing
 
@@ -148,14 +148,19 @@ queryCond key range cond direction limit = do
                            & qFilterCondition .~ Just cond
   runConduit $ querySource opts =$= CL.take limit
 
+-- | Simple query interface; tries to fetch the required count of items
+-- even if it results in more calls to dynamodb.
 query :: forall a t v1 v2 m hash range rest.
   (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
    DynamoScalar v1 hash, DynamoScalar v2 range)
-  => QueryOpts a hash range -- ^ Consistency of the read
+  => QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch
   -> m [a]
 query opts limit = runConduit $ querySource opts =$= CL.take limit
 
+-- | Record for defining scan command. Use lenses to set the content.
+--
+-- sParallel: (Segment number, Total segments)
 data ScanOpts a r = ScanOpts {
     _sFilterCondition :: Maybe (FilterCondition a)
   , _sConsistentRead :: Consistency
@@ -167,7 +172,7 @@ makeLenses ''ScanOpts
 scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
-
+-- | Conduit source for running a scan.
 scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
   => ScanOpts a r -> Source m a
 scanSource q = paginate (scanCmd q) =$= rsDecode (view D.srsItems)
@@ -203,7 +208,7 @@ scanCmd q =
 
 -- | Scan table using a given filter condition.
 --
--- > scanCond Eventually (colAddress <!:> "Home" <.> colCity ==. "London") 10
+-- > scanCond (colAddress <!:> "Home" <.> colCity ==. "London") 10
 scanCond :: forall a m hash range rest r t.
     (MonadAWS m, HasPrimaryKey a r t, Code a ~ '[ hash ': range ': rest], TableScan a r t)
     => FilterCondition a -> Int -> m [a]

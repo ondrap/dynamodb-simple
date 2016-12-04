@@ -30,20 +30,22 @@ module Database.DynamoDB (
     -- * Fetching items
   , getItem
   , getItemBatch
-    -- * Indexed query
+    -- * Query options
+  , QueryOpts
+  , queryOpts
+  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
+    -- * Performing query
   , query
   , querySimple
   , queryCond
   , querySource
-  , QueryOpts
-  , queryOpts
-  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
-    -- * Data Scan
-  , scanSource
-  , scanCond
+    -- * Scan options
   , ScanOpts
   , scanOpts
   , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
+    -- * Performing scan
+  , scanSource
+  , scanCond
     -- * Data entry
   , putItem
   , putItemBatch
@@ -51,7 +53,7 @@ module Database.DynamoDB (
     -- * Data modification
   , updateItemByKey
   , updateItemByKey_
-  , updateItemCond
+  , updateItemCond_
     -- * Deleting data
   , deleteItemByKey
   , deleteItemCondByKey
@@ -62,16 +64,16 @@ module Database.DynamoDB (
   , itemToKey
 ) where
 
+import           Prelude                             hiding (head)
 import           Control.Lens                        ((%~), (.~), (^.))
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
 import           Data.Bool                           (bool)
 import           Data.Function                       ((&))
 import           Data.HashMap.Strict                 (HashMap)
-import           Data.List.NonEmpty                  (NonEmpty(..))
-import           Data.Monoid                         ((<>))
+import           Data.List.NonEmpty                  (head)
 import           Data.Proxy
-import           Data.Semigroup                      (sconcat)
+import           Data.Semigroup                      ((<>))
 import qualified Data.Text                           as T
 import           Generics.SOP
 import           Network.AWS
@@ -99,22 +101,21 @@ dGetItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': ra
           => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
 dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyAndAttr p pkey
 
--- | Write item into the database; overwrite any previously existing
+-- | Write item into the database; overwrite any previously existing item with the same primary key.
 putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
 putItem item = void $ send (dPutItem item)
 
--- | Write item into the database only if it didn't exist
+-- | Write item into the database only if it doesn't already exist.
 insertItem  :: forall a r m hash range rest.
     (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest]) => a -> m ()
 insertItem item = do
-  let origcmd = dPutItem item
-      keyfields = primaryFields (Proxy :: Proxy a)
-      -- Create condition attribute_not_exist(primary_key)
-      pkeyMissing = sconcat $ fmap (AttrMissing . nameGenPath . pure . IntraName) keyfields
+  let keyfields = primaryFields (Proxy :: Proxy a)
+      -- Create condition attribute_not_exist(hash_key)
+      pkeyMissing = (AttrMissing . nameGenPath . pure . IntraName) $ head keyfields
       (expr, attnames, attvals) = dumpCondition pkeyMissing
-      cmd = origcmd & D.piExpressionAttributeNames .~ attnames
-                    & D.piConditionExpression .~ Just expr
-                    & bool (D.piExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
+      cmd = dPutItem item & D.piExpressionAttributeNames .~ attnames
+                          & D.piConditionExpression .~ Just expr
+                          & bool (D.piExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
   void $ send cmd
 
 
@@ -135,40 +136,48 @@ getItem consistency key = do
 -- | Delete item from the database by specifying the primary key.
 deleteItemByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> PrimaryKey (Code a) r -> m ()
-deleteItemByKey p pkey = void $ send (dDeleteItem p pkey)
+    => (Proxy a, PrimaryKey (Code a) r) -> m ()
+deleteItemByKey (p, pkey) = void $ send (dDeleteItem p pkey)
 
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
 deleteItemCondByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
-deleteItemCondByKey p pkey cond =
+    => (Proxy a, PrimaryKey (Code a) r) -> FilterCondition a -> m ()
+deleteItemCondByKey (p, pkey) cond =
     let (expr, attnames, attvals) = dumpCondition cond
         cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
                                  & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
                                  & D.diConditionExpression .~ Just expr
     in void (send cmd)
 
-dUpdateItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
+-- | Generate update item object; automatically adds condition for existence of primary
+-- key, so that only existing objects are modified
+dUpdateItem :: forall a r hash range xss.
+            (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> Maybe (FilterCondition a) ->  Maybe D.UpdateItem
 dUpdateItem p pkey actions mcond =
     genAction <$> dumpActions actions
   where
+    keyfields = primaryFields (Proxy :: Proxy a)
+        -- Create condition attribute_exists(hash_key)
+    pkeyExists = (AttrExists . nameGenPath . pure . IntraName) (head keyfields)
+
     genAction actparams =
         D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
                                    & addActions actparams
-                                   & maybe id addCondition mcond
+                                   & addCondition (Just pkeyExists <> mcond)
 
     addActions (expr, attnames, attvals) =
           (D.uiUpdateExpression .~ Just expr)
             . (D.uiExpressionAttributeNames %~ (<> attnames))
             . bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
-    addCondition cond =
+    addCondition (Just cond) =
         let (expr, attnames, attvals) = dumpCondition cond
         in  (D.uiConditionExpression .~ Just expr)
             . (D.uiExpressionAttributeNames %~ (<> attnames))
             . bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
+    addCondition Nothing = id -- Cannot happen anyway
 
 
 -- | Update item in a table
@@ -178,15 +187,14 @@ updateItemByKey_ :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
     => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> m ()
 updateItemByKey_ (p, pkey) actions
-  | Just cmd <- dUpdateItem p pkey actions Nothing =
-        void $ send cmd
+  | Just cmd <- dUpdateItem p pkey actions Nothing = void $ send cmd
   | otherwise = return ()
 
 updateItemByKey :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => PrimaryKey (Code a) r -> [Action a] -> m (Maybe a)
-updateItemByKey pkey actions
-  | Just cmd <- dUpdateItem (Proxy :: Proxy a) pkey actions Nothing = do
+    => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> m (Maybe a)
+updateItemByKey (p, pkey) actions
+  | Just cmd <- dUpdateItem p pkey actions Nothing = do
         rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
         case gdDecode (rs ^. D.uirsAttributes) of
             Just res -> return (Just res)
@@ -194,14 +202,14 @@ updateItemByKey pkey actions
   | otherwise = getItem Strongly pkey
 
 -- | Update item in a table while specifying a condition
-updateItemCond :: forall a m r hash range rest.
+updateItemCond_ :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
     => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> FilterCondition a -> m ()
-updateItemCond (p, pkey) actions cond
-  | Just cmd <- dUpdateItem p pkey actions (Just cond) =
-        void $ send cmd
+updateItemCond_ (p, pkey) actions cond
+  | Just cmd <- dUpdateItem p pkey actions (Just cond) = void $ send cmd
   | otherwise = return ()
 
+-- | Delete table from DynamoDB.
 deleteTable :: (MonadAWS m, DynamoTable a r) => Proxy a -> m ()
 deleteTable p = void $ send (D.deleteTable (tableName p))
 
@@ -215,24 +223,30 @@ type family UnMaybe a :: * where
 -- > colAddress <.> colStreet
 (<.>) :: (InCollection col2 (UnMaybe typ) 'NestedPath)
       => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
-(<.>) (Column (a1 :| rest1)) (Column (a2 :| rest2)) = Column (a1 :| rest1 ++ (a2 : rest2))
--- We need to associate from the right
+(<.>) (Column a1) (Column a2) = Column (a1 <> a2)
+-- It doesn't matter if it is inifxl or infixr; obviously this can be Semigroup instance,
+-- but currently as semigroup is not a superclass of monoid, it is probably better to have
+-- our own operator.
 infixl 7 <.>
 
 -- | Access an index in a nested list.
 --
 -- > colUsers <!> 0 <.> colName
 (<!>) :: Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
-(<!>) (Column (a1 :| rest)) num = Column (a1 :| (rest ++ [IntraIndex num]))
+(<!>) (Column a1) num = Column (a1 <> pure (IntraIndex num))
 infixl 8 <!>
 
 -- | Access a key in a nested hashmap.
 --
 -- > colPhones <!:> "mobile" <.> colNumber
 (<!:>) :: IsText key => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
-(<!:>) (Column (a1 :| rest)) key = Column (a1 :| (rest ++ [IntraName (toText key)]))
+(<!:>) (Column a1) key = Column (a1 <> pure (IntraName (toText key)))
 infixl 8 <!:>
 
+-- | Extract primary key from a record in a form, that can be directly used by other functions
+-- TODO: this should be callable on index structures containing primary key as well
+itemToKey :: (HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss]) => a -> (Proxy a, PrimaryKey (Code a) r)
+itemToKey a = (Proxy, dItemToKey a)
 
 -- $intro
 --
