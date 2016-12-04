@@ -42,6 +42,7 @@ module Database.DynamoDB (
   , scanSource
   , scanCond
   , ScanOpts
+  , scanOpts
   , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
     -- * Data entry
   , putItem
@@ -49,6 +50,7 @@ module Database.DynamoDB (
   , insertItem
     -- * Data modification
   , updateItemByKey
+  , updateItemByKey_
   , updateItemCond
     -- * Deleting data
   , deleteItemByKey
@@ -69,6 +71,7 @@ import           Data.HashMap.Strict                 (HashMap)
 import           Data.List.NonEmpty                  (NonEmpty(..))
 import           Data.Monoid                         ((<>))
 import           Data.Proxy
+import           Data.Semigroup                      (sconcat)
 import qualified Data.Text                           as T
 import           Generics.SOP
 import           Network.AWS
@@ -77,8 +80,7 @@ import qualified Network.AWS.DynamoDB.GetItem        as D
 import qualified Network.AWS.DynamoDB.PutItem        as D
 import qualified Network.AWS.DynamoDB.UpdateItem     as D
 import qualified Network.AWS.DynamoDB.DeleteTable    as D
-import           Data.Foldable (toList)
-import qualified Data.HashMap.Strict                 as HMap
+import qualified Network.AWS.DynamoDB.Types    as D
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
@@ -97,11 +99,6 @@ dGetItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': ra
           => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
 dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyAndAttr p pkey
 
-dUpdateItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey (Code a) r -> D.UpdateItem
-dUpdateItem p pkey = D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
-
-
 -- | Write item into the database; overwrite any previously existing
 putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
 putItem item = void $ send (dPutItem item)
@@ -110,12 +107,14 @@ putItem item = void $ send (dPutItem item)
 insertItem  :: forall a r m hash range rest.
     (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest]) => a -> m ()
 insertItem item = do
-  -- TODO: This is a little hacky; should use type-safe condition, but that would need more infrastructure
   let origcmd = dPutItem item
-      keyfields = toList $ primaryFields (Proxy :: Proxy a)
-      expr = T.intercalate " AND " $ map (\t -> "attribute_not_exists(#" <> t <> ")") keyfields
-      cmd = origcmd & D.piExpressionAttributeNames .~ HMap.fromList (map (\a -> ("#"<> a, a)) keyfields)
+      keyfields = primaryFields (Proxy :: Proxy a)
+      -- Create condition attribute_not_exist(primary_key)
+      pkeyMissing = sconcat $ fmap (AttrMissing . nameGenPath . pure . IntraName) keyfields
+      (expr, attnames, attvals) = dumpCondition pkeyMissing
+      cmd = origcmd & D.piExpressionAttributeNames .~ attnames
                     & D.piConditionExpression .~ Just expr
+                    & bool (D.piExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
   void $ send cmd
 
 
@@ -151,32 +150,55 @@ deleteItemCondByKey p pkey cond =
                                  & D.diConditionExpression .~ Just expr
     in void (send cmd)
 
+dUpdateItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
+          => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> Maybe (FilterCondition a) ->  Maybe D.UpdateItem
+dUpdateItem p pkey actions mcond =
+    genAction <$> dumpActions actions
+  where
+    genAction actparams =
+        D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
+                                   & addActions actparams
+                                   & maybe id addCondition mcond
+
+    addActions (expr, attnames, attvals) =
+          (D.uiUpdateExpression .~ Just expr)
+            . (D.uiExpressionAttributeNames %~ (<> attnames))
+            . bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+    addCondition cond =
+        let (expr, attnames, attvals) = dumpCondition cond
+        in  (D.uiConditionExpression .~ Just expr)
+            . (D.uiExpressionAttributeNames %~ (<> attnames))
+            . bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
+
+
 -- | Update item in a table
 --
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
-updateItemByKey :: forall a m r hash range rest.
+updateItemByKey_ :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> m ()
-updateItemByKey p pkey actions
-  | Just (expr, attnames, attvals) <- dumpActions actions = do
-        let cmd = dUpdateItem p pkey  & D.uiUpdateExpression .~ Just expr
-                                      & D.uiExpressionAttributeNames %~ (<> attnames)
-                                      & bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+    => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> m ()
+updateItemByKey_ (p, pkey) actions
+  | Just cmd <- dUpdateItem p pkey actions Nothing =
         void $ send cmd
   | otherwise = return ()
+
+updateItemByKey :: forall a m r hash range rest.
+      (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
+    => PrimaryKey (Code a) r -> [Action a] -> m (Maybe a)
+updateItemByKey pkey actions
+  | Just cmd <- dUpdateItem (Proxy :: Proxy a) pkey actions Nothing = do
+        rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
+        case gdDecode (rs ^. D.uirsAttributes) of
+            Just res -> return (Just res)
+            Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
+  | otherwise = getItem Strongly pkey
 
 -- | Update item in a table while specifying a condition
 updateItemCond :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
-    => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> FilterCondition a -> m ()
-updateItemCond p pkey actions cond
-  | Just (expr, attnames, actAttvals) <- dumpActions actions = do
-        let (cexpr, cattnames, condAttvals) = dumpCondition cond
-            attvals = actAttvals  <> condAttvals
-            cmd = dUpdateItem p pkey  & D.uiUpdateExpression .~ Just expr
-                                      & D.uiConditionExpression .~ Just cexpr
-                                      & D.uiExpressionAttributeNames %~ (<> (attnames <> cattnames))
-                                      & bool (D.uiExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+    => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> FilterCondition a -> m ()
+updateItemCond (p, pkey) actions cond
+  | Just cmd <- dUpdateItem p pkey actions (Just cond) =
         void $ send cmd
   | otherwise = return ()
 

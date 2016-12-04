@@ -45,7 +45,6 @@ import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import           Generics.SOP
 import qualified Network.AWS.DynamoDB.CreateTable as D
-import qualified Network.AWS.DynamoDB.DeleteTable as D
 import qualified Network.AWS.DynamoDB.PutItem     as D
 import qualified Network.AWS.DynamoDB.Query       as D
 import qualified Network.AWS.DynamoDB.Scan        as D
