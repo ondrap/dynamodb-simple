@@ -1,28 +1,15 @@
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE EmptyDataDecls             #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TemplateHaskell            #-}
-{-# LANGUAGE TypeSynonymInstances       #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- {-# LANGUAGE DuplicateRecordFields #-}
 
 module Main where
-import           Control.Lens             (iso, set, (%~), (.~), (^.))
+import           Control.Exception.Safe   (catchAny)
+import           Control.Lens             (set)
 import           Control.Monad            (forM_)
 import           Control.Monad.IO.Class   (MonadIO, liftIO)
 import           Data.Bool                (bool)
-import           Data.Conduit             (runConduit, (=$=))
-import qualified Data.Conduit.List        as CL
 import           Data.Function            ((&))
-import           Data.HashMap.Strict      (HashMap)
-import qualified Data.HashMap.Strict      as HMap
 import           Data.Monoid              ((<>))
 import           Data.Proxy
 import qualified Data.Set                 as Set
@@ -36,7 +23,6 @@ import           Network.AWS
 import           Network.AWS.DynamoDB     (dynamoDB, provisionedThroughput)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
-import Control.Exception.Safe (catchAny)
 
 import           Database.DynamoDB
 import           Database.DynamoDB.Filter
@@ -77,8 +63,10 @@ main = do
         (items :: [ArticleIndex]) <- queryCond (Tagged "News") Nothing condition Backward 10
         forM_ items (liftIO . print)
 
-
       -- Scan with condition
+      withLog "Simple scan unpublished articles" $ do
+        (items :: [Article]) <- scanCond (colArtPublished ==. Nothing) 10
+        forM_ items (liftIO . print)
       -- Update
       -- Delete
 
@@ -95,12 +83,21 @@ genArticles = do
                                (cycle [Just author3, Nothing, Just author2, Nothing, Just author1])
                                 (zip [1..(1000 :: Int)] (cycle [Set.singleton Red, Set.singleton Blue,
                                                         Set.fromList [Red, Green], Set.fromList [Red, Green, Blue]]))
-    -- comedy <- mapM mkComedy $ zip (cycle [author1, author2, author3]) [1..1000]
-    return news
+
+
+    comedy <- mapM mkComedy $ zip3 (cycle [author1, author2, author3])
+                               (cycle [Just author3, Nothing, Just author2, Nothing, Just author1])
+                                (zip [1..(1000 :: Int)] (cycle [Set.empty, Set.singleton Green,
+                                                        Set.fromList [Blue, Green], Set.fromList [Red, Green, Blue]]))
+
+    return $ news ++ comedy
   where
     mkNews (author, coauthor, (i, tags)) =
-      mkArticle author coauthor ("Title " <> T.pack (show i))
+      mkArticle author coauthor ("News title " <> T.pack (show i))
                 (Tagged "News") tags (bool (Just $ fromIntegral (-i)) Nothing (odd i))
+    mkComedy (author, coauthor, (i, tags)) =
+      mkArticle author coauthor ("Comedy title " <> T.pack (show i))
+                (Tagged "Comedy") tags (bool (Just $ fromIntegral (-i)) Nothing (even i))
 
     day :: NominalDiffTime
     day = 24 * 3600

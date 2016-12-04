@@ -39,10 +39,12 @@ module Database.DynamoDB (
   , querySource
   , QueryOpts
   , queryOpts
-  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition
+  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
     -- * Data Scan
-  , scan
+  , scanSource
   , scanCond
+  , ScanOpts
+  , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
     -- * Data entry
   , putItem
   , putItemBatch

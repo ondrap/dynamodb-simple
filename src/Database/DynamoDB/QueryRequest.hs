@@ -14,12 +14,18 @@ module Database.DynamoDB.QueryRequest (
   , queryCond
   , querySource
   -- * Scan
-  , scan
   , scanCond
+  , scanSource
+  -- * Query options
   , QueryOpts
   , queryOpts
-  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition
+  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
+  -- * Scan options
+  , ScanOpts
+  , scanOpts
+  , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
 ) where
+
 
 import           Control.Lens                    (view, (%~), (.~), (^.))
 import           Control.Lens.TH                 (makeLenses)
@@ -150,30 +156,57 @@ query :: forall a t v1 v2 m hash range rest.
   -> m [a]
 query opts limit = runConduit $ querySource opts =$= CL.take limit
 
-data ScanOpts a = ScanOpts {
-
+data ScanOpts a r = ScanOpts {
+    _sFilterCondition :: Maybe (FilterCondition a)
+  , _sConsistentRead :: Consistency
+  , _sLimit :: Maybe Natural
+  , _sParallel :: Maybe (Natural, Natural) -- ^ (Segment number, TotalSegments)
+  , _sExclusiveStartKey :: Maybe (PrimaryKey (Code a) r)
 }
+makeLenses ''ScanOpts
+scanOpts :: ScanOpts a r
+scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
--- | Read full contents of a table or index.
---
--- > runConduit $ scan Eventually =$= CL.mapM_ (\(i :: Test) -> liftIO (print i))
-scan :: forall a m hash range rest r t.
-    (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t) => Consistency -> Source m a
-scan consistency = do
-    let cmd = dScan (Proxy :: Proxy a) & D.sConsistentRead .consistencyL .~ consistency
-    paginate cmd =$= rsDecode (view D.srsItems)
+
+scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
+  => ScanOpts a r -> Source m a
+scanSource q = paginate (scanCmd q) =$= rsDecode (view D.srsItems)
+
+-- | Generate a "D.Query" object
+scanCmd :: forall a r t hash range xss.
+    (TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
+  => ScanOpts a r -> D.Scan
+scanCmd q =
+    dScan (Proxy :: Proxy a)
+        & D.sConsistentRead . consistencyL .~ (q ^. sConsistentRead)
+        & D.sLimit .~ (q ^. sLimit)
+        & addStartKey (q ^. sExclusiveStartKey)
+        & addCondition (q ^. sFilterCondition)
+        & addParallel (q ^. sParallel)
+  where
+    addCondition Nothing = id
+    addCondition (Just cond) =
+      let (expr, attnames, attvals) = dumpCondition cond
+      in (D.sExpressionAttributeNames %~ (<> attnames))
+           -- HACK; https://github.com/brendanhay/amazonka/issues/332
+         . bool (D.sExpressionAttributeValues %~ (<> attvals)) id (null attvals)
+         . (D.sFilterExpression .~ Just expr)
+    --
+    addStartKey Nothing = id
+    addStartKey (Just pkey) = D.sExclusiveStartKey .~ dKeyAndAttr (Proxy :: Proxy a) pkey
+    --
+    addParallel Nothing = id
+    addParallel (Just (segment,total)) =
+        (D.sTotalSegments .~ Just total)
+        . (D.sSegment .~ Just segment)
+
 
 -- | Scan table using a given filter condition.
 --
--- > runConduit $ scanCond Eventually (colAddress <!:> "Home" <.> colCity ==. "London")
--- >          =$= CL.mapM_ (\(i :: Test) -> liftIO (print i))
+-- > scanCond Eventually (colAddress <!:> "Home" <.> colCity ==. "London") 10
 scanCond :: forall a m hash range rest r t.
-    (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t)
-    => Consistency -> FilterCondition a -> Source m a
-scanCond consistency cond = do
-    let (expr, attnames, attvals) = dumpCondition cond
-        cmd = dScan (Proxy :: Proxy a) & D.sConsistentRead . consistencyL .~ consistency
-                                       & D.sExpressionAttributeNames .~ attnames
-                                       & bool (D.sExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
-                                       & D.sFilterExpression .~ Just expr
-    paginate cmd =$= rsDecode (view D.srsItems)
+    (MonadAWS m, HasPrimaryKey a r t, Code a ~ '[ hash ': range ': rest], TableScan a r t)
+    => FilterCondition a -> Int -> m [a]
+scanCond cond limit = do
+  let opts = scanOpts & sFilterCondition .~ Just cond
+  runConduit $ scanSource opts =$= CL.take limit
