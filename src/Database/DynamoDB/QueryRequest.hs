@@ -8,6 +8,7 @@
 {-# LANGUAGE ViewPatterns        #-}
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE RankNTypes          #-}
 
 module Database.DynamoDB.QueryRequest (
   -- * Query
@@ -16,6 +17,7 @@ module Database.DynamoDB.QueryRequest (
   , queryCond
   , querySource
   -- * Scan
+  , scan
   , scanCond
   , scanSource
   -- * Query options
@@ -30,7 +32,7 @@ module Database.DynamoDB.QueryRequest (
 
 
 import           Control.Arrow                   (first)
-import           Control.Lens                    (view, (%~), (.~), (^.))
+import           Control.Lens                    (view, (%~), (.~), (^.), Lens')
 import           Control.Lens.TH                 (makeLenses)
 import           Control.Monad.Catch             (throwM)
 import           Data.Bool                       (bool)
@@ -158,6 +160,7 @@ queryCond key range cond direction limit = do
                            & qFilterCondition .~ Just cond
   runConduit $ querySource opts =$= CL.take limit
 
+
 -- | Simple query interface; tries to fetch exactly the required count of items even when
 -- it means more calls to dynamodb. Return last evaluted key if end of data
 -- was not reached.
@@ -167,25 +170,36 @@ query :: forall a t v1 v2 m range hash rest.
   => QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch
   -> m ([a], Maybe (PrimaryKey (Code a) 'WithRange))
-query opts limit = do
-      (result, nextcmd) <- unfoldLimit fetch (queryCmd opts) limit
+query opts = boundedFetch D.qExclusiveStartKey (view D.qrsItems) (view D.qrsLastEvaluatedKey) (queryCmd opts)
+
+-- | Generic query interface for scanning/querying
+boundedFetch :: forall a r t m range hash cmd rest.
+  (MonadAWS m, HasPrimaryKey a r t, Code a ~ '[ hash ': range ': rest], AWSRequest cmd)
+  => Lens' cmd (HashMap T.Text D.AttributeValue)
+  -> (Rs cmd -> [HashMap T.Text D.AttributeValue])
+  -> (Rs cmd -> HashMap T.Text D.AttributeValue)
+  -> cmd
+  -> Int -- ^ Maximum number of items to fetch
+  -> m ([a], Maybe (PrimaryKey (Code a) r))
+boundedFetch startLens rsResult rsLast startcmd limit = do
+      (result, nextcmd) <- unfoldLimit fetch startcmd limit
       if | length result > limit ->
              let final = Seq.take limit result
              in case Seq.viewr final of
                  Seq.EmptyR -> return ([], Nothing)
                  (_ Seq.:> lastitem) -> return (toList final, Just (dItemToKey lastitem))
          | length result == limit, Just rs <- nextcmd ->
-              return (toList result, dAttrToKey (Proxy :: Proxy a) (rs ^. D.qExclusiveStartKey))
+              return (toList result, dAttrToKey (Proxy :: Proxy a) (rs ^. startLens))
          | otherwise -> return (toList result, Nothing)
   where
     fetch cmd = do
         rs <- send cmd
-        items <- Seq.fromList <$> mapM rsDecoder (rs ^. D.qrsItems)
-        let lastkey = rs ^. D.qrsLastEvaluatedKey
-            newquery = bool (Just (cmd & D.qExclusiveStartKey .~ lastkey)) Nothing (null lastkey)
+        items <- Seq.fromList <$> mapM rsDecoder (rsResult rs)
+        let lastkey = rsLast rs
+            newquery = bool (Just (cmd & startLens .~ lastkey)) Nothing (null lastkey)
         return (items, newquery)
 
-unfoldLimit :: Monad m => (D.Query -> m (Seq a, Maybe D.Query)) -> D.Query -> Int -> m (Seq a, Maybe D.Query)
+unfoldLimit :: Monad m => (cmd -> m (Seq a, Maybe cmd)) -> cmd -> Int -> m (Seq a, Maybe cmd)
 unfoldLimit code = go
   where
     go cmd limit = do
@@ -209,9 +223,19 @@ scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
 -- | Conduit source for running a scan.
+-- Note: see https://github.com/brendanhay/amazonka/issues/340
 scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
   => ScanOpts a r -> Source m a
 scanSource q = paginate (scanCmd q) =$= rsDecode (view D.srsItems)
+
+-- | Function to call bounded scans. Tries to return exactly requested number of items.
+--
+-- Note: see https://github.com/brendanhay/amazonka/issues/340
+scan :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t, HasPrimaryKey a r t)
+  => ScanOpts a r  -- ^ Scan settings
+  -> Int  -- ^ Required result count
+  -> m ([a], Maybe (PrimaryKey (Code a) r)) -- ^ list of results, lastEvalutedKey or Nothing if end of data reached
+scan opts = boundedFetch D.sExclusiveStartKey (view D.srsItems) (view D.srsLastEvaluatedKey) (scanCmd opts)
 
 -- | Generate a "D.Query" object
 scanCmd :: forall a r t hash range xss.
@@ -245,6 +269,7 @@ scanCmd q =
 -- | Scan table using a given filter condition.
 --
 -- > scanCond (colAddress <!:> "Home" <.> colCity ==. "London") 10
+-- Note: see https://github.com/brendanhay/amazonka/issues/340
 scanCond :: forall a m hash range rest r t.
     (MonadAWS m, HasPrimaryKey a r t, Code a ~ '[ hash ': range ': rest], TableScan a r t)
     => FilterCondition a -> Int -> m [a]

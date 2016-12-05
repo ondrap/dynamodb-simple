@@ -44,6 +44,7 @@ module Database.DynamoDB (
   , scanOpts
   , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
     -- * Performing scan
+  , scan
   , scanSource
   , scanCond
     -- * Data entry
