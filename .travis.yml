@@ -25,7 +25,7 @@ install:
   - sed -i 's/^jobs:/-- jobs:/' ${HOME}/.cabal/config
   - cabal install --only-dependencies --enable-tests
   - wget http://dynamodb-local.s3-website-us-west-2.amazonaws.com/dynamodb_local_latest.tar.gz
-  - tar xvfz dynamodb_local_latest.tar.gz
+  - tar xfz dynamodb_local_latest.tar.gz
 
 script:
   - cabal configure --enable-tests

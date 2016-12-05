@@ -51,7 +51,7 @@ withDb msg code = it msg runcode
       setEnv "AWS_ACCESS_KEY_ID" "XXXXXXXXXXXXXX"
       setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
       lgr  <- newLogger Info stdout
-      env  <- newEnv NorthVirginia Discover
+      env  <- newEnv Discover
       let dynamo = setEndpoint False "localhost" 8000 dynamoDB
       let newenv = env & configure dynamo
                        & set envLogger lgr
@@ -137,11 +137,41 @@ spec = do
             iInt new1 `shouldBe` 7
             iText new1 `shouldBe` "updated"
             iMText new1 `shouldBe` Nothing
-    -- withDb "scan continuation works" $ do
-    --     let template i = Test "hashkey" i "text" False 3.14 i Nothing
-    --         newItems = map template [1..55]
-    --     putItemBatch newItems
 
+    withDb "scan continuation works" $ do
+        let template i = Test "hashkey" i "text" False 3.14 i Nothing
+            newItems = map template [1..55]
+        putItemBatch newItems
+
+        (it1 :: [Test], next) <- scan (scanOpts & sFilterCondition .~ Just (colIInt >. 20)
+                                                & sLimit .~ Just 1) 5
+        (it2, _) <- scan (scanOpts & sFilterCondition .~ Just (colIInt >. 20)
+                                                & sLimit .~ Just 1
+                                                & sStartKey .~ next) 5
+        liftIO $ map iInt (it1 ++ it2) `shouldBe` [21..30]
+
+    withDb "searching empty strings" $ do
+        let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
+        let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
+        putItem testitem1
+        putItem testitem2
+        (items1 :: [Test]) <- queryCond "1" Nothing (colIText ==. "") Forward 10
+        (items2 :: [Test]) <- queryCond "1" Nothing (colIMText ==. Nothing) Forward 10
+        liftIO $ items1 `shouldBe` [testitem1]
+        liftIO $ items2 `shouldBe` [testitem1]
+
+    withDb "deleting by key" $ do
+        let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
+        let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
+        putItem testitem1
+        putItem testitem2
+        (items :: [Test], _) <- scan scanOpts 10
+        deleteItemByKey (itemToKey testitem1)
+        deleteItemByKey (itemToKey testitem2)
+        (items2 :: [Test], _) <- scan scanOpts 10
+        liftIO $ do
+          length items `shouldBe` 2
+          length items2 `shouldBe` 0
 
 
 main :: IO ()
