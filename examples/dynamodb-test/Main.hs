@@ -46,9 +46,9 @@ main = do
       -- Delete table
       deleteTable (Proxy :: Proxy Article) `catchAny` (\_ -> return ())
       -- Create table; provisionedThroughput for indexes is some low default
-      migrateTables (provisionedThroughput 5 5) []
+      migrateTables (provisionedThroughput 5 5) (provisionedThroughput 5 5)
 
-      withLog "Entring some data" $
+      withLog "Loading data" $
         genArticles >>= putItemBatch
 
       withLog "Querying published news articles" $ do
@@ -70,9 +70,15 @@ main = do
         forM_ items (liftIO . print)
 
       -- Update
-
+      withLog "Change field in a nested structure with Maybe" $ do
+        -- get some article
+        ([item] :: [Article]) <- scanCond (colArtCoauthor /=. Nothing) 1
+        logmsg $ "Before update: " <> T.pack (show item)
+        newitem <- updateItemByKey (itemToKey item) [colArtCoauthor <.> colAutGender =. Female]
+        logmsg $ "After update: " <> T.pack (show newitem)
 
       -- Delete
+
 
 logmsg :: MonadIO m => T.Text -> m ()
 logmsg = liftIO . T.putStrLn

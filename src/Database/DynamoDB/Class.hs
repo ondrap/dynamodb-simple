@@ -34,6 +34,7 @@ module Database.DynamoDB.Class (
   , TableCreate(..)
   , IndexCreate(..)
   , HasPrimaryKey(..)
+  , createLocalIndex
 ) where
 
 import           Control.Lens                     ((.~))
@@ -168,14 +169,15 @@ class DynamoCollection a r 'IsIndex => DynamoIndex a parent (r :: RangeType) | a
   indexName = gdConstrName
 
 class DynamoIndex a parent r => IndexCreate a parent (r :: RangeType) where
-  createIndex ::
+  createGlobalIndex ::
     (DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ], Code a ~ '[hash ': range ': rest ])
              => Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+
 instance (DynamoIndex a p 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v hash) => IndexCreate a p 'NoRange where
-  createIndex = defaultCreateIndex
+  createGlobalIndex = defaultCreateGlobalIndex
 instance (DynamoIndex a p 'WithRange, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
       => IndexCreate a p 'WithRange where
-  createIndex = defaultCreateIndexRange
+  createGlobalIndex = defaultCreateGlobalIndexRange
 
 gdConstrName :: forall a xss. (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ])
   => Proxy a -> T.Text
@@ -296,11 +298,11 @@ defaultQueryKey p key (Just range) =
     (hashname, _) = gdHashField p
     (rangename, _) = gdRangeField p
 
-defaultCreateIndex :: forall a r parent r2 hash rest xs rest2 v.
+defaultCreateGlobalIndex :: forall a r parent r2 hash rest xs rest2 v.
   (DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
     Code a ~ '[hash ': rest ], DynamoScalar v hash) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
-defaultCreateIndex p thr =
+defaultCreateGlobalIndex p thr =
     (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
   where
     (hashname, hashproxy) = gdHashField p
@@ -313,13 +315,12 @@ defaultCreateIndex p thr =
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (toList parentKey ++ [hashname])) $ toList $ gdFieldNames (Proxy :: Proxy a)
 
-defaultCreateIndexRange :: forall a r parent r2 hash rest xs rest2 range v1 v2.
-  (DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
+mkIndexHelper :: forall a parent r2 hash rest xs rest2 range v1 v2.
+  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
     Code a ~ '[hash ': range ': rest ],
     DynamoScalar v1 hash, DynamoScalar v2 range) =>
-  Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
-defaultCreateIndexRange p thr =
-    (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
+  Proxy a -> (NonEmpty D.KeySchemaElement, D.Projection, [D.AttributeDefinition])
+mkIndexHelper p = (keyschema, proj, attrdefs)
   where
     (hashname, hashproxy) = gdHashField p
     (rangename, rangeproxy) = gdRangeField p
@@ -332,7 +333,28 @@ defaultCreateIndexRange p thr =
                                  & D.pNonKeyAttributes .~ Just lst
          | otherwise = D.projection & D.pProjectionType .~ Just D.KeysOnly
     parentKey = primaryFields (Proxy :: Proxy parent)
-    attrlist = filter (`notElem` (toList parentKey ++ [hashname])) $ toList $ gdFieldNames (Proxy :: Proxy a)
+    attrlist = filter (`notElem` (toList parentKey ++ [hashname, rangename])) $ toList $ gdFieldNames (Proxy :: Proxy a)
+
+defaultCreateGlobalIndexRange :: forall a parent r2 hash rest xs rest2 range v1 v2.
+  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
+    Code a ~ '[hash ': range ': rest ],
+    DynamoScalar v1 hash, DynamoScalar v2 range) =>
+  Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+defaultCreateGlobalIndexRange p thr =
+    (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
+  where
+    (keyschema, proj, attrdefs) = mkIndexHelper p
+
+createLocalIndex :: forall a parent r2 hash rest xs rest2 range v1 v2.
+  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
+    Code a ~ '[hash ': range ': rest ],
+    DynamoScalar v1 hash, DynamoScalar v2 range) =>
+  Proxy a -> (D.LocalSecondaryIndex, [D.AttributeDefinition])
+createLocalIndex p =
+    (D.localSecondaryIndex (indexName p) keyschema proj, attrdefs)
+  where
+    (keyschema, proj, attrdefs) = mkIndexHelper p
+
 
 defaultScan :: (TableScan a r t) => Proxy a -> D.Scan
 defaultScan p = D.scan (qsTableName p) & D.sIndexName .~ qsIndexName p

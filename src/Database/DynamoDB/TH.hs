@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Template Haskell macros to automatically derive instances, create column datatypes
 --  and create migrations functions.
@@ -20,7 +21,7 @@ module Database.DynamoDB.TH (
 ) where
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1)
-import           Control.Monad                   (forM_)
+import           Control.Monad                   (forM_, when)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
 import           Data.Char                       (toUpper)
@@ -45,7 +46,8 @@ import           Database.DynamoDB.Internal
 -- > data Test { first :: Text, second :: Text, third :: Int } deriving (GHC.Generic)
 -- > data TestIndex { third :: Int, second :: T.Text} deriving (GHC.Generic)
 -- >
--- > $(mkTableDefs (''Test, True) [(''TestIndex, False)] )
+-- > mkTableDefs (''Test, WithRange) [(''TestIndex, NoRange)] []
+-- >
 -- > instance Generic Test
 -- > instance HasDatatypeInfo Test
 -- > instance DynamoCollection Test WithRange IsTable
@@ -57,36 +59,32 @@ import           Database.DynamoDB.Internal
 -- > instance DynamoIndex TestIndex Test NoRange IsIndex
 -- >
 -- > data P_First
--- > instance InCollection P_First Test 'NestedPath
--- > data P_Second
--- > instance InCollection P_Second Test 'NestedPath
--- > instance InCollection P_Second TestIndex 'NestedPath
--- > instance InCollection P_Second TestIndex 'FullPath
--- > data P_Third
--- > instance InCollection P_Third Test 'NestedPath
--- > instance InCollection P_Third Test 'FullPath
--- > instance InCollection P_Third TestIndex 'NestedPath
--- > instance InCollection P_Third TestIndex 'FullPath
--- >
+-- > instance InCollection P_First Test 'NestedPath -- For every attribute
+-- > instance InCollection P_Second TestIndex 'FullPath -- For every non-primary attribute
 -- > colFirst :: Column Text TypColumn P_First
 -- > colFirst = Column
--- > colSecond :: Column Text TypColumn P_Second
--- > colSecond = Column
--- > colThird :: Column Int TypColumn P_Third
--- > colThidr = Column
 mkTableDefs ::
     String -- ^ Name of the migration function
   -> (Name, RangeType)      -- ^ Main record type name, bool indicates if it has a sort key
-  -> [(Name, RangeType)] -- ^ Index records, bool indicates if it has a sort key
+  -> [(Name, RangeType)] -- ^ Global secondary index records, bool indicates if it has a sort key
+  -> [Name] -- ^ Local secondary index records
   -> Q [Dec]
-mkTableDefs migname (table, tblrange) indexes =
+mkTableDefs migname (table, tblrange) globindexes locindexes =
   execWriterT $ do
     tblFieldNames <- getFieldNames table
+    let tblHashName = fst (head tblFieldNames)
     buildColData tblFieldNames
     genBaseCollection table tblrange Nothing
 
+    -- Check, that hash key name in locindexes == hash key in primary table
+    forM_ locindexes $ \idx -> do
+        idxHashName <- (fst . head) <$> getFieldNames idx
+        when (idxHashName /= tblHashName) $
+            fail ("Hash key " <> show idxHashName <> " in local index " <> show idx
+                  <> " is not equal to table hash key " <> show tblHashName)
+
     -- Instances for indices
-    forM_ indexes $ \(idx, idxrange) -> do
+    forM_ (globindexes ++ map (,WithRange) locindexes) $ \(idx, idxrange) -> do
         genBaseCollection idx idxrange (Just table)
         -- Check that all records from indices conform to main table and create instances
         instfields <- getFieldNames idx
@@ -102,7 +100,7 @@ mkTableDefs migname (table, tblrange) indexes =
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
 
-    migfunc <- lift $ mkMigrationFunc migname table (map fst indexes)
+    migfunc <- lift $ mkMigrationFunc migname table (map fst globindexes) locindexes
     tell migfunc
 
 pkeySize :: RangeType -> Int
@@ -227,20 +225,23 @@ deriveEncodable table = do
         |] >>= tell
 
 -- | Creates top-leval variable as a call to a migration function with partially applied createIndex
-mkMigrationFunc :: String -> Name -> [Name] -> Q [Dec]
-mkMigrationFunc name table indices = do
-    let lstmap = ListE (map idxtemplate indices)
+mkMigrationFunc :: String -> Name -> [Name] -> [Name] -> Q [Dec]
+mkMigrationFunc name table globindexes locindexes = do
+    let glMap = ListE (map glIdxTemplate globindexes)
+        locMap = ListE (map locIdxTemplate locindexes)
     let funcname = mkName name
     m <- newName "m"
     let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)]
                                   (AppT (AppT ArrowT (ConT ''ProvisionedThroughput))
-                                  (AppT (AppT ArrowT (AppT ListT (ConT ''ProvisionedThroughput)))
+                                  (AppT (AppT ArrowT (ConT ''ProvisionedThroughput))
                                   (AppT (VarT m) (TupleT 0)))))
-    return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (VarE 'runMigration)
-              (SigE (ConE 'Proxy) (AppT (ConT ''Proxy)
-              (ConT table)))) lstmap)) []]
+    return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
+              (SigE (ConE 'Proxy)
+              (AppT (ConT ''Proxy)
+              (ConT table)))) glMap) locMap)) []]
   where
-    idxtemplate idx = AppE (VarE 'createIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
+    glIdxTemplate idx = AppE (VarE 'createGlobalIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
+    locIdxTemplate idx = AppE (VarE 'createLocalIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
 
 -- $table
 --

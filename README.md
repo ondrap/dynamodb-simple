@@ -36,6 +36,7 @@ test = do
 ### Features
 
 - Global secondary indexes.
+- Local secondary indexes.
 - Tables with only hash keys as well as tables with combined hash and sort key.
 - Sparse indexes (define the column as `Maybe` in a table, omit the `Maybe` in index definition).
 - Standard datatypes including `Tagged` and basic default instances for data types supporting
@@ -46,13 +47,13 @@ test = do
 - Type-safe update actions.
 - Template-haskell macro to easily create all relevant instances.
 - 'Schema migration' - upon startup checks if the database schema matches the definition
-  and, if possible, adjusts the database.
+  and, if possible, adjusts the database. If it is impossible, it fails.
 - Automatic handling of invalid values (empty strings, empty sets). Automatic rewriting of
   queries when searching for these empty values.
+- Compatible with GHC8 `DuplicateRecordFields`
 
 ### What is planned
 
-- Local secondary index
 - Table name customization.
 - Translation of field names to attribute names.
 - Support for automatic versioning of fields.

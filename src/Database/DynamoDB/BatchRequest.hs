@@ -21,7 +21,7 @@ import           Control.Monad.IO.Class              (liftIO)
 import           Data.Function                       ((&))
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as HMap
-import           Data.List.NonEmpty                  (nonEmpty)
+import           Data.List.NonEmpty                  (NonEmpty(..))
 import           Data.Monoid                         ((<>))
 import           Data.Proxy
 import qualified Data.Text                           as T
@@ -64,8 +64,9 @@ retryReadBatch = go mempty
               go result (cmd & D.bgiRequestItems .~ unprocessed)
 
 -- | Chunk list according to batch operation limit
-chunkBatch :: Int -> [a] -> ([a], [a])
-chunkBatch limit = (,) <$> take limit <*> drop limit
+chunkBatch :: Int -> [a] -> [NonEmpty a]
+chunkBatch limit (splitAt limit -> (x:xs, rest)) = (x :| xs) : chunkBatch limit rest
+chunkBatch _ _ = []
 
 -- | Batch write into the database.
 --
@@ -74,32 +75,30 @@ chunkBatch limit = (,) <$> take limit <*> drop limit
 --
 -- Note: On exception, the information about which items were saved is unavailable
 putItemBatch :: forall m a r. (MonadAWS m, DynamoTable a r) => [a] -> m ()
-putItemBatch (chunkBatch 25 -> (nonEmpty -> Just items, rest)) = do
-    let tblname = tableName (Proxy :: Proxy a)
-        wrequests = fmap mkrequest items
-        mkrequest item = D.writeRequest & D.wrPutRequest .~ Just (D.putRequest & D.prItem .~ gdEncode item)
-        cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
-    retryWriteBatch cmd
-    putItemBatch rest
-putItemBatch _ = return ()
+putItemBatch lst = mapM_ go (chunkBatch 25 lst)
+  where
+    go items = do
+      let tblname = tableName (Proxy :: Proxy a)
+          wrequests = fmap mkrequest items
+          mkrequest item = D.writeRequest & D.wrPutRequest .~ Just (D.putRequest & D.prItem .~ gdEncode item)
+          cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
+      retryWriteBatch cmd
 
 
--- | Get batch of items. 
+-- | Get batch of items.
 getItemBatch :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
     => Consistency -> [PrimaryKey (Code a) r] -> m [a]
-getItemBatch consistency = go []
+getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
   where
-    go previous (chunkBatch 100 -> (nonEmpty -> Just keys, rest)) = do
+    go keys = do
         let tblname = tableName (Proxy :: Proxy a)
             wkaas = fmap (dKeyAndAttr (Proxy :: Proxy a)) keys
             kaas = D.keysAndAttributes wkaas & D.kaaConsistentRead . consistencyL .~ consistency
             cmd = D.batchGetItem & D.bgiRequestItems . at tblname .~ Just kaas
 
         tbls <- retryReadBatch cmd
-        result <- mapM decoder (tbls ^.. ix tblname . traverse)
-        go (result: previous) rest
-    go previous _ = return (concat previous)
+        mapM decoder (tbls ^.. ix tblname . traverse)
     decoder item =
         case gdDecode item of
           Just res -> return res
@@ -116,11 +115,11 @@ dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
 deleteItemBatchByKey :: forall m a r range hash rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> [PrimaryKey (Code a) r] -> m ()
-deleteItemBatchByKey p (chunkBatch 25 -> (nonEmpty -> Just keys, rest)) = do
-  let tblname = tableName p
-      wrequests = fmap mkrequest keys
-      mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest p key)
-      cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
-  retryWriteBatch cmd
-  deleteItemBatchByKey p rest
-deleteItemBatchByKey _ _ = return ()
+deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
+  where
+    go keys = do
+      let tblname = tableName p
+          wrequests = fmap mkrequest keys
+          mkrequest key = D.writeRequest & D.wrDeleteRequest .~ Just (dDeleteRequest p key)
+          cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
+      retryWriteBatch cmd

@@ -4,6 +4,8 @@
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE GADTs       #-}
 
+-- {-# LANGUAGE DuplicateRecordFields #-}
+
 module Schema where
 
 import           Data.Scientific            (toBoundedInteger)
@@ -93,4 +95,4 @@ data AuthorIndex = AuthorIndex {
   , a_artTags       :: Set.Set Tag
 } deriving (Show, GHC.Generic)
 
-mkTableDefs "migrateTables" (''Article, NoRange) [(''ArticleIndex, WithRange), (''AuthorIndex, WithRange)]
+mkTableDefs "migrateTables" (''Article, NoRange) [(''ArticleIndex, WithRange), (''AuthorIndex, WithRange)] []

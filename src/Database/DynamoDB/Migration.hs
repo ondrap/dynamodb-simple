@@ -12,13 +12,14 @@ module Database.DynamoDB.Migration (
 ) where
 
 import           Control.Concurrent                 (threadDelay)
-import           Control.Lens                       (set, view, (%~), (.~),
+import           Control.Lens                       (_1, set, view, (%~), (.~),
                                                      (^.), (^..), (^?), _Just)
 import           Control.Monad                      (unless, void, when)
 import           Control.Monad.Catch                (throwM)
 import           Control.Monad.IO.Class             (liftIO)
 import           Control.Monad.Loops                (whileM_)
 import           Control.Monad.Trans.AWS            (AWSConstraint)
+import           Data.Bool                          (bool)
 import           Data.Foldable                      (toList)
 import           Data.Function                      ((&))
 import qualified Data.HashMap.Strict                as HMap
@@ -93,12 +94,33 @@ findInconsistentIdxes newidxes oldidxes =
     keysOk newidx oldidx = Just (newidx ^. D.gsiKeySchema) == oldidx ^. D.gsidKeySchema
     -- Assume the indices were created by this module and we want them exactly the same
     projectionOk newidx oldidx =
-        newprojtype == oldprojtype && newkeys == oldkeys
+       -- Allow the index to have more fields than we know about
+        newprojtype == Just D.KeysOnly || (newprojtype == oldprojtype && newkeys `Set.isSubsetOf` oldkeys)
       where
           newprojtype = newidx ^? D.gsiProjection . D.pProjectionType . _Just
           oldprojtype = oldidx ^? D.gsidProjection . _Just . D.pProjectionType . _Just
           newkeys = Set.fromList $ newidx ^.. D.gsiProjection . D.pNonKeyAttributes . _Just . traverse
           oldkeys = Set.fromList $ oldidx ^.. D.gsidProjection . _Just . D.pNonKeyAttributes . _Just . traverse
+
+-- | Verbatim copy of findInconsistentIdxes, but changed to localSecondaryIndex structure
+findInconsistentLocIdxes :: [D.LocalSecondaryIndex] -> [D.LocalSecondaryIndexDescription] -> [T.Text]
+findInconsistentLocIdxes newidxes oldidxes =
+    map (view (_1 . D.lsiIndexName)) $ filter hasConflict $ toList $ HMap.intersectionWith (,) newmap oldmap
+  where
+    newmap = HMap.fromList $ map (\idx -> (idx ^. D.lsiIndexName, idx)) newidxes
+    oldmap = HMap.fromList $ mapMaybe (\idx -> (,idx) <$> idx ^. D.lsidIndexName) oldidxes
+    --
+    hasConflict (newidx, oldix) = not (projectionOk newidx oldix && keysOk newidx oldix)
+    keysOk newidx oldidx = Just (newidx ^. D.lsiKeySchema) == oldidx ^. D.lsidKeySchema
+    -- Assume the indices were created by this module and we want them exactly the same
+    projectionOk newidx oldidx =
+        newprojtype == Just D.KeysOnly || (newprojtype == oldprojtype && newkeys `Set.isSubsetOf` oldkeys)
+      where
+          newprojtype = newidx ^? D.lsiProjection . D.pProjectionType . _Just
+          oldprojtype = oldidx ^? D.lsidProjection . _Just . D.pProjectionType . _Just
+          newkeys = Set.fromList $ newidx ^.. D.lsiProjection . D.pNonKeyAttributes . _Just . traverse
+          oldkeys = Set.fromList $ oldidx ^.. D.lsidProjection . _Just . D.pNonKeyAttributes . _Just . traverse
+
 
 -- | Compare indexes and return list of indices to delete and to create; indices to recreate are included
 compareIndexes :: D.CreateTable -> D.TableDescription -> ([T.Text], [D.GlobalSecondaryIndex])
@@ -113,10 +135,24 @@ compareIndexes tabledef descr = (todelete, tocreate)
     todelete = map (view D.gsiIndexName) recreate ++ (oldidxnames \\ newidxnames)
     tocreate = recreate ++ filter (\idx -> idx ^. D.gsiIndexName `notElem` oldidxnames) newidxlist
 
+compareLocalIndexes :: MonadAWS m => D.CreateTable -> D.TableDescription -> m ()
+compareLocalIndexes tabledef descr = do
+  let newidxlist = tabledef ^. D.ctLocalSecondaryIndexes
+      oldidxlist = descr ^. D.tdLocalSecondaryIndexes
+      newidxnames = newidxlist ^.. traverse . D.lsiIndexName
+      oldidxnames = oldidxlist ^.. traverse . D.lsidIndexName . _Just
+      missing = filter (`notElem` oldidxnames) newidxnames
+  unless (null missing) $
+      throwM (DynamoException ("Missing local secondary indexes: " <> T.intercalate "," missing))
+  let inconsistent = findInconsistentLocIdxes newidxlist oldidxlist
+  unless (null inconsistent) $
+      throwM (DynamoException ("Inconsistent local index settings (projection/types): "
+                                <> T.intercalate "," inconsistent))
+
 -- | Main table migration code
 tryMigration :: (AWSConstraint r m, MonadAWS m) => D.CreateTable -> D.TableDescription -> m ()
 tryMigration tabledef descr = do
-    -- Check key schema on the main table, fail if it changed
+    -- Check key schema on the main table, fail if it changed.
     let tblkeys = tabledef ^. D.ctKeySchema
         oldtblkeys = descr ^. D.tdKeySchema
     when (Just tblkeys /= oldtblkeys) $ do
@@ -130,6 +166,9 @@ tryMigration tabledef descr = do
         let msg = "Table or index " <> tblname <> " has conflicting attribute key types: " <> T.pack (show conflictTableAttrs)
         logmsg Error msg
         throwM (DynamoException msg)
+
+    -- Check that local indexes are in sync with the settings. Fails if inconsistent.
+    compareLocalIndexes tabledef descr
 
     -- Adjust indexes
     let (todelete, tocreate) = compareIndexes tabledef descr
@@ -189,20 +228,18 @@ createOrMigrate tabledef = do
 runMigration :: (TableCreate table r, MonadAWS m, Code table ~ '[ hash ': range ': rest ])
   =>  Proxy table
   -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])]
+  -> [(D.LocalSecondaryIndex, [D.AttributeDefinition])]
   -> D.ProvisionedThroughput
-  -> [D.ProvisionedThroughput]
+  -> D.ProvisionedThroughput
   -> m ()
-runMigration ptbl apindices tblprov idxprov =
+runMigration ptbl globindices' locindices tblprov idxprov =
   liftAWS $ do
-      let defaultProvision = D.provisionedThroughput 5 5
-      when (length apindices /= length idxprov) $
-          logmsg Error "Length of provisioning list for indexes doesn't equal number of indexes"
       let tbl = createTable ptbl tblprov
-          indices = zipWith ($) apindices (idxprov ++ repeat defaultProvision)
-          idxattrs = concatMap snd indices
+          globindices = map ($ idxprov) globindices'
+          idxattrs = concatMap snd globindices ++ concatMap snd locindices
       -- Bug in amazonka, we must not set the attribute if it is empty
       -- see https://github.com/brendanhay/amazonka/issues/332
-      let final = if | null apindices -> tbl
-                     | otherwise -> tbl & D.ctGlobalSecondaryIndexes .~ map fst indices
-                                        & D.ctAttributeDefinitions %~ (\old -> nub (concat (old : [idxattrs])))
+      let final = tbl & bool (D.ctGlobalSecondaryIndexes .~ map fst globindices) id (null globindices)
+                      & bool (D.ctLocalSecondaryIndexes .~ map fst locindices) id (null locindices)
+                      & D.ctAttributeDefinitions %~ (nub . (<> idxattrs))
       createOrMigrate final

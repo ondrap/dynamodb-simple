@@ -276,7 +276,7 @@ itemToKey a = (Proxy, dItemToKey a)
 --   , messageid :: T.Text
 --   , subject :: T.Text
 -- } deriving (Show, GHC.Generic)
--- $(mkTableDefs "migrate" (''Test, True) [])
+-- $(mkTableDefs "migrate" (''Test, WithRange) [])
 --
 -- main = do
 --    lgr <- newLogger Info stdout
