@@ -1,5 +1,9 @@
 language: c
 sudo: false
+addons:
+  apt:
+    packages:
+      - default-jre
 matrix:
   include:
     - env: CABALVER=1.22 GHCVER=7.10.1
@@ -20,10 +24,13 @@ install:
   - travis_retry cabal update
   - sed -i 's/^jobs:/-- jobs:/' ${HOME}/.cabal/config
   - cabal install --only-dependencies --enable-tests
+  - wget http://dynamodb-local.s3-website-us-west-2.amazonaws.com/dynamodb_local_latest.tar.gz
+  - tar xvfz dynamodb_local_latest.tar.gz
 
 script:
   - cabal configure --enable-tests
   - cabal build
+  - "java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -inMemory &""
   - cabal test
   - cabal check
   - cabal sdist
