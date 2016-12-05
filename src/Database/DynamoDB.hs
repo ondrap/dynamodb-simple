@@ -96,11 +96,11 @@ import           Database.DynamoDB.QueryRequest
 
 dDeleteItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
-dDeleteItem p pkey = D.deleteItem (tableName p) & D.diKey .~ dKeyAndAttr p pkey
+dDeleteItem p pkey = D.deleteItem (tableName p) & D.diKey .~ dKeyToAttr p pkey
 
 dGetItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
-dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyAndAttr p pkey
+dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyToAttr p pkey
 
 -- | Write item into the database; overwrite any previously existing item with the same primary key.
 putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
@@ -165,7 +165,7 @@ dUpdateItem p pkey actions mcond =
     pkeyExists = (AttrExists . nameGenPath . pure . IntraName) (head keyfields)
 
     genAction actparams =
-        D.updateItem (tableName p) & D.uiKey .~ dKeyAndAttr p pkey
+        D.updateItem (tableName p) & D.uiKey .~ dKeyToAttr p pkey
                                    & addActions actparams
                                    & addCondition (Just pkeyExists <> mcond)
 

@@ -93,7 +93,7 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
   where
     go keys = do
         let tblname = tableName (Proxy :: Proxy a)
-            wkaas = fmap (dKeyAndAttr (Proxy :: Proxy a)) keys
+            wkaas = fmap (dKeyToAttr (Proxy :: Proxy a)) keys
             kaas = D.keysAndAttributes wkaas & D.kaaConsistentRead . consistencyL .~ consistency
             cmd = D.batchGetItem & D.bgiRequestItems . at tblname .~ Just kaas
 
@@ -106,7 +106,7 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
 
 dDeleteRequest :: (HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
-dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyAndAttr p pkey
+dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey
 
 -- | Batch version of 'deleteItemByKey'.
 --

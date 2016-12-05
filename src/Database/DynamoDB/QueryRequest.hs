@@ -111,7 +111,7 @@ queryCmd q =
          . (D.qFilterExpression .~ Just expr)
     addStartKey Nothing = id
     addStartKey (Just (key, range)) =
-        D.qExclusiveStartKey .~ dKeyAndAttr (Proxy :: Proxy a) (key, range)
+        D.qExclusiveStartKey .~ dKeyToAttr (Proxy :: Proxy a) (key, range)
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
@@ -265,7 +265,7 @@ scanCmd q =
          . (D.sFilterExpression .~ Just expr)
     --
     addStartKey Nothing = id
-    addStartKey (Just pkey) = D.sExclusiveStartKey .~ dKeyAndAttr (Proxy :: Proxy a) pkey
+    addStartKey (Just pkey) = D.sExclusiveStartKey .~ dKeyToAttr (Proxy :: Proxy a) pkey
     --
     addParallel Nothing = id
     addParallel (Just (segment,total)) =
