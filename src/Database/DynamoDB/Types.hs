@@ -258,7 +258,8 @@ instance DynamoEncodable AE.Value where
           [("BOOL", AE.Bool val)] -> Just (AE.Bool val)
           [("L", _)] -> (AE.Array .V.fromList) <$> mapM (dDecode . Just) (attr ^. D.avL)
           [("M", _)] -> AE.Object <$> mapM (dDecode . Just) (attr ^. D.avM)
-          [("N", val)] -> Just val
+          [("N", AE.String num)] -> AE.decodeStrict (encodeUtf8 num)
+          [("N", num@(AE.Number _))] -> Just num -- Just in case, this is usually not returned
           [("S", AE.String val)] -> Just (AE.String val)
           [("NULL", _)] -> Just AE.Null
           _ -> Nothing
