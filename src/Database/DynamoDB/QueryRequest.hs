@@ -6,6 +6,8 @@
 {-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE MultiWayIf          #-}
+{-# LANGUAGE FlexibleContexts          #-}
 
 module Database.DynamoDB.QueryRequest (
   -- * Query
@@ -27,6 +29,7 @@ module Database.DynamoDB.QueryRequest (
 ) where
 
 
+import           Control.Arrow                   (first)
 import           Control.Lens                    (view, (%~), (.~), (^.))
 import           Control.Lens.TH                 (makeLenses)
 import           Control.Monad.Catch             (throwM)
@@ -45,6 +48,9 @@ import qualified Network.AWS.DynamoDB.Query      as D
 import qualified Network.AWS.DynamoDB.Scan       as D
 import qualified Network.AWS.DynamoDB.Types      as D
 import           Numeric.Natural                 (Natural)
+import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
+import Data.Foldable (toList)
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
@@ -55,12 +61,14 @@ import           Database.DynamoDB.Types
 -- | Helper function to decode data from the conduit.
 rsDecode :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t)
     => (i -> [HashMap T.Text D.AttributeValue]) -> Conduit i m a
-rsDecode trans = CL.mapFoldable trans =$= CL.mapM decoder
-  where
-    decoder item =
-      case gdDecode item of
-        Just res -> return res
-        Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
+rsDecode trans = CL.mapFoldable trans =$= CL.mapM rsDecoder
+
+rsDecoder :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], DynamoCollection a r t)
+    => HashMap T.Text D.AttributeValue -> m a
+rsDecoder item =
+  case gdDecode item of
+    Just res -> return res
+    Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
 -- | Options for a generic query.
 data QueryOpts a hash range = QueryOpts {
@@ -71,9 +79,8 @@ data QueryOpts a hash range = QueryOpts {
   , _qDirection :: Direction
   , _qLimit :: Maybe Natural -- ^ This sets the "D.qLimit" settings for maximum number of evaluated items
   , _qExclusiveStartKey :: Maybe (hash, range)
-  -- ^ Key at which the evaluation starts. When paging, this should be set to qrsLastEvaluatedKey
-  -- of the last operation and the first item should be dropped (??? or not ???). The qrsLastEvaluatedKey is
-  -- not currently available in this API.
+  -- ^ Key after which the evaluation starts. When paging, this should be set to qrsLastEvaluatedKey
+  -- of the last operation.
 }
 makeLenses ''QueryOpts
 -- | Default settings for query options.
@@ -106,6 +113,7 @@ queryCmd q =
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
+-- Note: see https://github.com/brendanhay/amazonka/issues/340
 querySource :: forall a t m v1 v2 hash range rest.
     (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
      DynamoScalar v1 hash, DynamoScalar v2 range)
@@ -133,6 +141,8 @@ querySimple key range direction limit = do
                            & qLimit .~ Just (fromIntegral limit)
   runConduit $ querySource opts =$= CL.take limit
 
+-- | Query with condition
+-- Note: see https://github.com/brendanhay/amazonka/issues/340
 queryCond :: forall a t v1 v2 m hash range rest.
   (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
    DynamoScalar v1 hash, DynamoScalar v2 range)
@@ -148,15 +158,41 @@ queryCond key range cond direction limit = do
                            & qFilterCondition .~ Just cond
   runConduit $ querySource opts =$= CL.take limit
 
--- | Simple query interface; tries to fetch the required count of items
--- even if it results in more calls to dynamodb.
-query :: forall a t v1 v2 m hash range rest.
-  (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
+-- | Simple query interface; tries to fetch exactly the required count of items even when
+-- it means more calls to dynamodb. Return last evaluted key if end of data
+-- was not reached.
+query :: forall a t v1 v2 m range hash rest.
+  (TableQuery a t, DynamoCollection a 'WithRange t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
    DynamoScalar v1 hash, DynamoScalar v2 range)
   => QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch
-  -> m [a]
-query opts limit = runConduit $ querySource opts =$= CL.take limit
+  -> m ([a], Maybe (PrimaryKey (Code a) 'WithRange))
+query opts limit = do
+      (result, nextcmd) <- unfoldLimit fetch (queryCmd opts) limit
+      if | length result > limit ->
+             let final = Seq.take limit result
+             in case Seq.viewr final of
+                 Seq.EmptyR -> return ([], Nothing)
+                 (_ Seq.:> lastitem) -> return (toList final, Just (dItemToKey lastitem))
+         | length result == limit, Just rs <- nextcmd ->
+              return (toList result, dAttrToKey (Proxy :: Proxy a) (rs ^. D.qExclusiveStartKey))
+         | otherwise -> return (toList result, Nothing)
+  where
+    fetch cmd = do
+        rs <- send cmd
+        items <- Seq.fromList <$> mapM rsDecoder (rs ^. D.qrsItems)
+        let lastkey = rs ^. D.qrsLastEvaluatedKey
+            newquery = bool (Just (cmd & D.qExclusiveStartKey .~ lastkey)) Nothing (null lastkey)
+        return (items, newquery)
+
+unfoldLimit :: Monad m => (D.Query -> m (Seq a, Maybe D.Query)) -> D.Query -> Int -> m (Seq a, Maybe D.Query)
+unfoldLimit code = go
+  where
+    go cmd limit = do
+      (vals, mnext) <- code cmd
+      let cnt = length vals
+      if | Just next <- mnext, cnt < limit -> first (vals <>) <$> go next (limit - cnt)
+         | otherwise                       -> return (vals, mnext)
 
 -- | Record for defining scan command. Use lenses to set the content.
 --

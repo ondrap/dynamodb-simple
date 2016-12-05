@@ -87,11 +87,13 @@ class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType
   dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
   dKeyAndAttr :: (Code a ~ '[ hash ': range ': xss ])
             => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
+  dAttrToKey :: Proxy a -> HMap.HashMap T.Text D.AttributeValue -> Maybe (PrimaryKey (Code a) r)
 
 instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
           DynamoScalar v hash) => HasPrimaryKey a 'NoRange t where
   dItemToKey = gdFirstField
   dKeyAndAttr p key = HMap.singleton (fst $ gdHashField p) (dScalarEncode key)
+  dAttrToKey p attrs = HMap.lookup (fst $ gdHashField p) attrs >>= dDecode . Just
 
 instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
           DynamoScalar v1 hash, DynamoScalar v2 range) => HasPrimaryKey a 'WithRange t where
@@ -99,6 +101,12 @@ instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
   dKeyAndAttr p (key, range) = HMap.fromList plist
     where
       plist = [(fst $ gdHashField p, dScalarEncode key), (fst $ gdRangeField p, dScalarEncode range)]
+  dAttrToKey p attrs = do
+      pkey <- HMap.lookup (fst $ gdHashField p) attrs
+      pval <- dDecode (Just pkey)
+      rngkey <- HMap.lookup (fst $ gdRangeField p) attrs
+      rngval <- dDecode (Just rngkey)
+      return (pval, rngval)
 
 -- | Descritpion of dynamo table
 class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r where

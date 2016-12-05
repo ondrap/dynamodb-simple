@@ -12,6 +12,9 @@ module Database.DynamoDB.TH (
     -- * Derive instances for nested records
     -- $nested
 
+    -- * Sparse indexes
+    -- $sparse
+
     -- * Macros
     mkTableDefs
   , deriveCollection
@@ -270,7 +273,7 @@ mkMigrationFunc name table globindexes locindexes = do
 --   , i_tDate :: T.Text
 --   , i_tDescr :: T.Text
 -- } deriving (Show, GHC.Generic)
--- $(mkTableDefs "migrate" (''Test, True) [(''TestIndex, False)])
+-- mkTableDefs "migrate" (''Test, WithRange) [(''TestIndex, NoRange)] []
 -- @
 --
 
@@ -291,5 +294,10 @@ mkMigrationFunc name table globindexes locindexes = do
 --   , _tBase :: T.Text
 --   , _tBooks :: [Book]
 -- } deriving (Show, GHC.Generic)
--- $(mkTableDefs "migrate" (''Test, True) [])
+-- mkTableDefs "migrate" (''Test, WithRange) [] []
 -- @
+
+-- $sparse
+--
+
+--

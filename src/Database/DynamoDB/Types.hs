@@ -1,18 +1,18 @@
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
-{-# LANGUAGE ViewPatterns        #-}
-{-# LANGUAGE DefaultSignatures   #-}
-{-# LANGUAGE KindSignatures   #-}
-{-# LANGUAGE MultiParamTypeClasses   #-}
+{-# LANGUAGE CPP                    #-}
+{-# LANGUAGE DataKinds              #-}
+{-# LANGUAGE DefaultSignatures      #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs                  #-}
+{-# LANGUAGE KindSignatures         #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE OverloadedStrings      #-}
+{-# LANGUAGE PatternSynonyms        #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TupleSections          #-}
 {-# LANGUAGE UndecidableInstances   #-}
-{-# LANGUAGE FunctionalDependencies   #-}
+{-# LANGUAGE ViewPatterns           #-}
 
 -- |
 module Database.DynamoDB.Types (
@@ -46,8 +46,11 @@ import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
 import           Data.Maybe                  (catMaybes, mapMaybe)
 import           Data.Proxy
+import           Data.Scientific             (Scientific, floatingOrInteger,
+                                              fromFloatDigits, toBoundedInteger,
+                                              toRealFloat)
 import qualified Data.Set                    as Set
-import           Data.Tagged                 (Tagged(..), unTagged)
+import           Data.Tagged                 (Tagged (..), unTagged)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import qualified Data.Vector                 as V
@@ -57,7 +60,6 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
-import Data.Scientific (Scientific, toBoundedInteger, floatingOrInteger, toRealFloat, fromFloatDigits)
 
 
 -- | Exceptions thrown by some dynamodb-simple actions.
