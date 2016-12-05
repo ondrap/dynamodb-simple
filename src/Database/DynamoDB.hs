@@ -33,7 +33,7 @@ module Database.DynamoDB (
     -- * Query options
   , QueryOpts
   , queryOpts
-  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
+  , qConsistentRead, qStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
     -- * Performing query
   , query
   , querySimple
@@ -42,7 +42,7 @@ module Database.DynamoDB (
     -- * Scan options
   , ScanOpts
   , scanOpts
-  , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
+  , sFilterCondition, sConsistentRead, sLimit, sParallel, sStartKey
     -- * Performing scan
   , scan
   , scanSource

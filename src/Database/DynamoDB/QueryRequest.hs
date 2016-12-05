@@ -23,11 +23,11 @@ module Database.DynamoDB.QueryRequest (
   -- * Query options
   , QueryOpts
   , queryOpts
-  , qConsistentRead, qExclusiveStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
+  , qConsistentRead, qStartKey, qDirection, qFilterCondition, qHashKey, qRangeCondition, qLimit
   -- * Scan options
   , ScanOpts
   , scanOpts
-  , sFilterCondition, sConsistentRead, sLimit, sParallel, sExclusiveStartKey
+  , sFilterCondition, sConsistentRead, sLimit, sParallel, sStartKey
 ) where
 
 
@@ -80,7 +80,7 @@ data QueryOpts a hash range = QueryOpts {
   , _qConsistentRead :: Consistency
   , _qDirection :: Direction
   , _qLimit :: Maybe Natural -- ^ This sets the "D.qLimit" settings for maximum number of evaluated items
-  , _qExclusiveStartKey :: Maybe (hash, range)
+  , _qStartKey :: Maybe (hash, range)
   -- ^ Key after which the evaluation starts. When paging, this should be set to qrsLastEvaluatedKey
   -- of the last operation.
 }
@@ -99,7 +99,7 @@ queryCmd q =
                   & D.qConsistentRead . consistencyL .~ (q ^. qConsistentRead)
                   & D.qScanIndexForward .~ Just (q ^. qDirection == Forward)
                   & D.qLimit .~ (q ^. qLimit)
-                  & addStartKey (q ^. qExclusiveStartKey)
+                  & addStartKey (q ^. qStartKey)
                   & addCondition (q ^. qFilterCondition)
   where
     addCondition Nothing = id
@@ -115,6 +115,7 @@ queryCmd q =
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
+--
 -- Note: see https://github.com/brendanhay/amazonka/issues/340
 querySource :: forall a t m v1 v2 hash range rest.
     (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
@@ -125,8 +126,6 @@ querySource q = paginate (queryCmd q) =$= rsDecode (view D.qrsItems)
 -- | Perform a simple, eventually consistent, query.
 --
 -- Simple to use function to query limited amount of data from database.
---
--- Throws 'DynamoException' if an item cannot be decoded.
 querySimple :: forall a t v1 v2 m hash range rest.
   (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
    DynamoScalar v1 hash, DynamoScalar v2 range)
@@ -138,13 +137,9 @@ querySimple :: forall a t v1 v2 m hash range rest.
 querySimple key range direction limit = do
   let opts = queryOpts key & qRangeCondition .~ range
                            & qDirection .~ direction
-                           -- Without the condition, the number of processed and returned items
-                           -- should be roughly the same
-                           & qLimit .~ Just (fromIntegral limit)
-  runConduit $ querySource opts =$= CL.take limit
+  fst <$> query opts limit
 
 -- | Query with condition
--- Note: see https://github.com/brendanhay/amazonka/issues/340
 queryCond :: forall a t v1 v2 m hash range rest.
   (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
    DynamoScalar v1 hash, DynamoScalar v2 range)
@@ -158,10 +153,9 @@ queryCond key range cond direction limit = do
   let opts = queryOpts key & qRangeCondition .~ range
                            & qDirection .~ direction
                            & qFilterCondition .~ Just cond
-  runConduit $ querySource opts =$= CL.take limit
+  fst <$> query opts limit
 
-
--- | Simple query interface; tries to fetch exactly the required count of items even when
+-- | Fetch exactly the required count of items even when
 -- it means more calls to dynamodb. Return last evaluted key if end of data
 -- was not reached.
 query :: forall a t v1 v2 m range hash rest.
@@ -170,7 +164,14 @@ query :: forall a t v1 v2 m range hash rest.
   => QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch
   -> m ([a], Maybe (PrimaryKey (Code a) 'WithRange))
-query opts = boundedFetch D.qExclusiveStartKey (view D.qrsItems) (view D.qrsLastEvaluatedKey) (queryCmd opts)
+query opts limit = do
+    -- Add qLimit to the opts if not already there - and if there is no condition
+    let cmd = queryCmd (opts & addQLimit)
+    boundedFetch D.qExclusiveStartKey (view D.qrsItems) (view D.qrsLastEvaluatedKey) cmd limit
+  where
+    addQLimit
+      | Nothing <- opts ^. qLimit, Nothing <- opts ^. qFilterCondition = qLimit .~ Just (fromIntegral limit)
+      | otherwise = id
 
 -- | Generic query interface for scanning/querying
 boundedFetch :: forall a r t m range hash cmd rest.
@@ -216,26 +217,32 @@ data ScanOpts a r = ScanOpts {
   , _sConsistentRead :: Consistency
   , _sLimit :: Maybe Natural
   , _sParallel :: Maybe (Natural, Natural) -- ^ (Segment number, TotalSegments)
-  , _sExclusiveStartKey :: Maybe (PrimaryKey (Code a) r)
+  , _sStartKey :: Maybe (PrimaryKey (Code a) r)
 }
 makeLenses ''ScanOpts
 scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
 -- | Conduit source for running a scan.
+--
 -- Note: see https://github.com/brendanhay/amazonka/issues/340
 scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
   => ScanOpts a r -> Source m a
 scanSource q = paginate (scanCmd q) =$= rsDecode (view D.srsItems)
 
 -- | Function to call bounded scans. Tries to return exactly requested number of items.
---
--- Note: see https://github.com/brendanhay/amazonka/issues/340
 scan :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t, HasPrimaryKey a r t)
   => ScanOpts a r  -- ^ Scan settings
   -> Int  -- ^ Required result count
   -> m ([a], Maybe (PrimaryKey (Code a) r)) -- ^ list of results, lastEvalutedKey or Nothing if end of data reached
-scan opts = boundedFetch D.sExclusiveStartKey (view D.srsItems) (view D.srsLastEvaluatedKey) (scanCmd opts)
+scan opts limit = do
+    let cmd = scanCmd (opts & addSLimit)
+    boundedFetch D.sExclusiveStartKey (view D.srsItems) (view D.srsLastEvaluatedKey) cmd limit
+  where
+    -- If there is no filtercondition, number of processed items = number of scanned items
+    addSLimit
+      | Nothing <- opts ^. sLimit, Nothing <- opts ^. sFilterCondition = sLimit .~ Just (fromIntegral limit)
+      | otherwise = id
 
 -- | Generate a "D.Query" object
 scanCmd :: forall a r t hash range xss.
@@ -245,7 +252,7 @@ scanCmd q =
     dScan (Proxy :: Proxy a)
         & D.sConsistentRead . consistencyL .~ (q ^. sConsistentRead)
         & D.sLimit .~ (q ^. sLimit)
-        & addStartKey (q ^. sExclusiveStartKey)
+        & addStartKey (q ^. sStartKey)
         & addCondition (q ^. sFilterCondition)
         & addParallel (q ^. sParallel)
   where
