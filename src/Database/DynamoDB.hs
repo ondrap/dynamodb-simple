@@ -71,7 +71,6 @@ import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
 import           Data.Bool                           (bool)
 import           Data.Function                       ((&))
-import           Data.HashMap.Strict                 (HashMap)
 import           Data.List.NonEmpty                  (head)
 import           Data.Proxy
 import           Data.Semigroup                      ((<>))
@@ -217,36 +216,6 @@ updateItemCond_ (p, pkey) actions cond
 -- | Delete table from DynamoDB.
 deleteTable :: (MonadAWS m, DynamoTable a r) => Proxy a -> m ()
 deleteTable p = void $ send (D.deleteTable (tableName p))
-
--- | Allow skipping over maybe types when using <.>
-type family UnMaybe a :: * where
-  UnMaybe (Maybe a) = a
-  UnMaybe a = a
-
--- | Combine attributes from nested structures.
---
--- > colAddress <.> colStreet
-(<.>) :: (InCollection col2 (UnMaybe typ) 'NestedPath)
-      => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
-(<.>) (Column a1) (Column a2) = Column (a1 <> a2)
--- It doesn't matter if it is inifxl or infixr; obviously this can be Semigroup instance,
--- but currently as semigroup is not a superclass of monoid, it is probably better to have
--- our own operator.
-infixl 7 <.>
-
--- | Access an index in a nested list.
---
--- > colUsers <!> 0 <.> colName
-(<!>) :: Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
-(<!>) (Column a1) num = Column (a1 <> pure (IntraIndex num))
-infixl 8 <!>
-
--- | Access a key in a nested hashmap.
---
--- > colPhones <!:> "mobile" <.> colNumber
-(<!:>) :: IsText key => Column (HashMap key typ) 'TypColumn col -> T.Text -> Column typ 'TypColumn col
-(<!:>) (Column a1) key = Column (a1 <> pure (IntraName (toText key)))
-infixl 8 <!:>
 
 -- | Extract primary key from a record in a form, that can be directly used by other functions
 -- TODO: this should be callable on index structures containing primary key as well

@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TupleSections         #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module Database.DynamoDB.Internal where
 
@@ -16,7 +17,7 @@ import           Data.Foldable              (foldlM)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as HMap
 import           Data.List.NonEmpty         (NonEmpty(..))
-import           Data.Monoid                ((<>))
+import           Data.Semigroup             ((<>))
 import           Data.Proxy
 import qualified Data.Text                  as T
 import           Network.AWS.DynamoDB.Types (AttributeValue)
@@ -184,3 +185,34 @@ consistencyL = iso tocons fromcons
 -- | Scan/query direction
 data Direction = Forward | Backward
   deriving (Show, Eq)
+
+
+-- | Allow skipping over maybe types when using <.>
+type family UnMaybe a :: * where
+  UnMaybe (Maybe a) = a
+  UnMaybe a = a
+
+-- | Combine attributes from nested structures.
+--
+-- > colAddress <.> colStreet
+(<.>) :: (InCollection col2 (UnMaybe typ) 'NestedPath)
+      => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
+(<.>) (Column a1) (Column a2) = Column (a1 <> a2)
+-- It doesn't matter if it is inifxl or infixr; obviously this can be Semigroup instance,
+-- but currently as semigroup is not a superclass of monoid, it is probably better to have
+-- our own operator.
+infixl 7 <.>
+
+-- | Access an index in a nested list.
+--
+-- > colUsers <!> 0 <.> colName
+(<!>) :: Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
+(<!>) (Column a1) num = Column (a1 <> pure (IntraIndex num))
+infixl 8 <!>
+
+-- | Access a key in a nested hashmap.
+--
+-- > colPhones <!:> "mobile" <.> colNumber
+(<!:>) :: IsText key => Column (HashMap key typ) 'TypColumn col -> key -> Column typ 'TypColumn col
+(<!:>) (Column a1) key = Column (a1 <> pure (IntraName (toText key)))
+infixl 8 <!:>

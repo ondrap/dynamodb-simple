@@ -14,12 +14,14 @@ data Test = Test {
   , subject  :: T.Text
   , replies  :: Int
 } deriving (Show, GHC.Generic)
-mkTableDefs "migrate" (''Test, WithRange) []
+mkTableDefs "migrate" (''Test, WithRange) [] []
 
 test :: IO ()
 test = do
   lgr  <- newLogger Info stdout
-  env  <- newEnv NorthVirginia Discover
+  setEnv "AWS_ACCESS_KEY_ID" "XXXXXXXXXXXXXX"
+  setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
+  env  <- newEnv Discover
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   let newenv = env & configure dynamo & set envLogger lgr
   runResourceT $ runAWS newenv $ do
@@ -30,7 +32,7 @@ test = do
       (item :: Maybe Test) <- getItem Eventually ("news", "john")
       liftIO $ print item
       --
-      (items :: [Test]) <- scanCond (colReplies >. 15)
+      (items :: [Test]) <- scanCond (colReplies >. 15) 10
       liftIO $ print items
 ````
 ### Features
@@ -78,7 +80,7 @@ Empty string and empty set are represented by omitting the value.
 * Don't try to use inequality comparisons (`>.`, `<.`) on empty strings.
 * If you use `colMaybeCol == Nothing`, it gets internally replaced
   by `attr_missing(colMaybeCol)`, so it will behave as expected. The same with
-  empty `String` or `Set`.
+  empty `String` or `Set`. Keep that in mind when traversing nested structures.
 * In case of schema change, `Maybe` columns are considered `Nothing`.
 * In case of schema change, `String` columns are decoded as empty strings, `Set` columns
   as empty sets, `[a]` columns as empty lists.

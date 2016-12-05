@@ -10,7 +10,7 @@ module BaseSpec where
 
 import           Control.Exception.Safe   (SomeException, catchAny, finally,
                                            try)
-import           Control.Lens             (set, (.~))
+import           Control.Lens             ((.~))
 import           Control.Monad.IO.Class   (liftIO)
 import           Data.Conduit             (runConduit, (=$=))
 import qualified Data.Conduit.List        as CL
@@ -18,6 +18,7 @@ import           Data.Either              (isLeft)
 import           Data.Function            ((&))
 import           Data.List                (sort)
 import           Data.Proxy
+import           Data.Semigroup           ((<>))
 import qualified Data.Text                as T
 import qualified GHC.Generics             as GHC
 import           Network.AWS
@@ -25,7 +26,6 @@ import           Network.AWS.DynamoDB     (dynamoDB, provisionedThroughput)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
-import Data.Semigroup ((<>))
 
 import           Database.DynamoDB
 import           Database.DynamoDB.Filter
@@ -50,11 +50,11 @@ withDb msg code = it msg runcode
     runcode = do
       setEnv "AWS_ACCESS_KEY_ID" "XXXXXXXXXXXXXX"
       setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
-      lgr  <- newLogger Info stdout
+      lgr  <- newLogger Debug stdout
       env  <- newEnv Discover
       let dynamo = setEndpoint False "localhost" 8000 dynamoDB
       let newenv = env & configure dynamo
-                       & set envLogger lgr
+                       -- & set envLogger lgr
       runResourceT $ runAWS newenv $ do
           deleteTable (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
           migrateTest (provisionedThroughput 5 5) (provisionedThroughput 5 5)
@@ -108,12 +108,18 @@ spec = do
         putItemBatch newItems
         items <- queryCond "hashkey" Nothing (colIInt >. 50) Forward 5
         liftIO $ items `shouldBe` drop 50 newItems
-    withDb "scanCond works correctly with qLimit" $ do
+    withDb "scanCond works correctly" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
         items <- scanCond (colIInt >. 50) 5
         liftIO $ items `shouldBe` drop 50 newItems
+    withDb "scan works correctly with qlimit" $ do
+      let template i = Test "hashkey" i "text" False 3.14 i Nothing
+          newItems = map template [1..55]
+      putItemBatch newItems
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt >. 50)) 5
+      liftIO $ items `shouldBe` drop 50 newItems
     withDb "querySimple works correctly with RangeOper" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
@@ -138,13 +144,20 @@ spec = do
             iText new1 `shouldBe` "updated"
             iMText new1 `shouldBe` Nothing
 
+    withDb "update fails on non-existing item" $ do
+        let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
+        putItem testitem1
+        updateItemByKey_ (Proxy :: Proxy Test, ("1", 2)) (colIBool =. True)
+        (res :: Either SomeException ()) <- try $ updateItemByKey_ (Proxy :: Proxy Test, ("2", 3)) (colIBool =. True)
+        liftIO $ res `shouldSatisfy` isLeft
+
     withDb "scan continuation works" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
 
         (it1 :: [Test], next) <- scan (scanOpts & sFilterCondition .~ Just (colIInt >. 20)
-                                                & sLimit .~ Just 1) 5
+                                                & sLimit .~ Just 2) 5
         (it2, _) <- scan (scanOpts & sFilterCondition .~ Just (colIInt >. 20)
                                                 & sLimit .~ Just 1
                                                 & sStartKey .~ next) 5

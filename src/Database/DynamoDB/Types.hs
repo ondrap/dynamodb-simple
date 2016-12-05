@@ -283,7 +283,7 @@ gdEncode a =
     gdEncodeRec :: All DynamoEncodable xs => ConstructorInfo xs -> NP I xs -> K [(T.Text, AttributeValue)] xs
     gdEncodeRec (Record _ ns) xs =
         K $ catMaybes $ hcollapse
-          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K ((T.pack name,) <$> dEncode val)) ns xs
+          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K ((translateFieldName name,) <$> dEncode val)) ns xs
     gdEncodeRec _ _ = error "Cannot serialize non-record types."
 
     palldynamo :: Proxy (All DynamoEncodable)
@@ -325,11 +325,12 @@ translateFieldName = T.pack . translate
       | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
       | otherwise = name
 
--- | Class to limit certain operations for updates.
+-- | Class to limit +=. and -=. for updates.
 class IsNumber a
 instance IsNumber Int
 instance IsNumber Double
 instance IsNumber Integer
+instance IsNumber a => IsNumber (Tagged t a)
 
 -- | Class to limit certain operations to text-like only in queries.
 -- Members of this class can be keys to 'HashMap'.
@@ -339,6 +340,9 @@ class (Eq a, Hashable a) => IsText a where
 instance IsText T.Text where
   toText = id
   fromText = id
+instance (Hashable (Tagged t a), IsText a) => IsText (Tagged t a) where
+  toText (Tagged txt) = toText txt
+  fromText tg = Tagged (fromText tg)
 
 -- | Operation on range key for 'Database.queryKey.queryKey'.
 data RangeOper a where

@@ -8,7 +8,7 @@
 --
 -- Example as used in nested structure for scan:
 --
--- > scanCond Eventually (colCtvrty <!:> "a" <.> colInTreti <.> colInnPrvni ==. "x")
+-- > scanCond (colCtvrty <!:> "a" <.> colInTreti <.> colInnPrvni ==. "x") 20
 module Database.DynamoDB.Filter (
       -- * Condition datatype
       FilterCondition(Not)

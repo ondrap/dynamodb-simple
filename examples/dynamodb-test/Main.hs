@@ -38,7 +38,7 @@ main = do
   setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
 
   lgr  <- newLogger Info stdout
-  env  <- newEnv NorthVirginia Discover
+  env  <- newEnv Discover
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   let newenv = env & configure dynamo
                    & set envLogger lgr
@@ -74,7 +74,7 @@ main = do
         -- get some article
         ([item] :: [Article]) <- scanCond (colArtCoauthor /=. Nothing) 1
         logmsg $ "Before update: " <> T.pack (show item)
-        newitem <- updateItemByKey (itemToKey item) [colArtCoauthor <.> colAutGender =. Female]
+        newitem <- updateItemByKey (itemToKey item) (colArtCoauthor <.> colAutGender =. Female)
         logmsg $ "After update: " <> T.pack (show newitem)
 
       -- Delete
