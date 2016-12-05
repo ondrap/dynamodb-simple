@@ -151,13 +151,13 @@ rangeEnd :: T.Text
 rangeEnd = ":rangeEnd"
 
 rangeOper :: RangeOper a -> T.Text -> T.Text
-rangeOper (RangeEquals _) n = "#" <> n <> " = " <> rangeKey
-rangeOper (RangeLessThan _) n = "#" <> n <> " < " <> rangeKey
-rangeOper (RangeLessThanE _) n = "#" <> n <> " <= " <> rangeKey
-rangeOper (RangeGreaterThan _) n = "#" <> n <> " > " <> rangeKey
-rangeOper (RangeGreaterThanE _) n = "#" <> n <> " >= " <> rangeKey
-rangeOper (RangeBetween _ _) n = "#" <> n <> " BETWEEN " <> rangeStart <> " AND " <> rangeEnd
-rangeOper (RangeBeginsWith _) n = "begins_with(#" <> n <> ", " <> rangeKey <> ")"
+rangeOper (RangeEquals _) n = n <> " = " <> rangeKey
+rangeOper (RangeLessThan _) n = n <> " < " <> rangeKey
+rangeOper (RangeLessThanE _) n = n <> " <= " <> rangeKey
+rangeOper (RangeGreaterThan _) n = n <> " > " <> rangeKey
+rangeOper (RangeGreaterThanE _) n = n <> " >= " <> rangeKey
+rangeOper (RangeBetween _ _) n = n <> " BETWEEN " <> rangeStart <> " AND " <> rangeEnd
+rangeOper (RangeBeginsWith _) n = "begins_with(" <> n <> ", " <> rangeKey <> ")"
 
 rangeData :: DynamoScalar v a => RangeOper a -> [(T.Text, AttributeValue)]
 rangeData (RangeEquals a) = [(rangeKey, dScalarEncode a)]

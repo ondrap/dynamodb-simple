@@ -300,7 +300,7 @@ defaultQueryKey p key (Just range) =
                          & D.qIndexName .~ qIndexName p
   where
     rangeSubst = "#R"
-    condExpression = "#K = :key AND <> " <> rangeOper range rangeSubst
+    condExpression = "#K = :key AND " <> rangeOper range rangeSubst
     attrnames = HMap.fromList [("#K", hashname), (rangeSubst, rangename)]
     attrvals = HMap.fromList $ rangeData range ++ [(":key", dScalarEncode key)]
     (hashname, _) = gdHashField p

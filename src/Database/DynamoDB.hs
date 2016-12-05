@@ -156,7 +156,7 @@ deleteItemCondByKey (p, pkey) cond =
 -- key, so that only existing objects are modified
 dUpdateItem :: forall a r hash range xss.
             (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey (Code a) r -> [Action a] -> Maybe (FilterCondition a) ->  Maybe D.UpdateItem
+          => Proxy a -> PrimaryKey (Code a) r -> Action a -> Maybe (FilterCondition a) ->  Maybe D.UpdateItem
 dUpdateItem p pkey actions mcond =
     genAction <$> dumpActions actions
   where
@@ -186,26 +186,30 @@ dUpdateItem p pkey actions mcond =
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItemByKey_ :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> m ()
+    => (Proxy a, PrimaryKey (Code a) r) -> Action a -> m ()
 updateItemByKey_ (p, pkey) actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = void $ send cmd
   | otherwise = return ()
 
 updateItemByKey :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> m (Maybe a)
+    => (Proxy a, PrimaryKey (Code a) r) -> Action a -> m a
 updateItemByKey (p, pkey) actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = do
         rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
         case gdDecode (rs ^. D.uirsAttributes) of
-            Just res -> return (Just res)
+            Just res -> return res
             Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
-  | otherwise = getItem Strongly pkey
+  | otherwise = do
+      rs <- getItem Strongly pkey
+      case rs of
+          Just res -> return res
+          Nothing -> throwM (DynamoException "Cannot decode item.")
 
 -- | Update item in a table while specifying a condition
 updateItemCond_ :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> [Action a] -> FilterCondition a -> m ()
+    => (Proxy a, PrimaryKey (Code a) r) -> Action a -> FilterCondition a -> m ()
 updateItemCond_ (p, pkey) actions cond
   | Just cmd <- dUpdateItem p pkey actions (Just cond) = void $ send cmd
   | otherwise = return ()
