@@ -30,7 +30,7 @@ install:
 script:
   - cabal configure --enable-tests
   - cabal build
-  - "java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -inMemory &""
+  - "java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -inMemory &"
   - cabal test
   - cabal check
   - cabal sdist
