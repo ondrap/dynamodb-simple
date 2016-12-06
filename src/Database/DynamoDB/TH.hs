@@ -20,6 +20,7 @@ module Database.DynamoDB.TH (
     mkTableDefs
   , TableConfig(..)
   , tableConfig
+  , defaultTranslate
     -- * Nested structures
   , deriveCollection
   , deriveEncodable
@@ -48,26 +49,33 @@ import           Database.DynamoDB.Migration     (runMigration)
 import           Database.DynamoDB.Types
 import           Database.DynamoDB.Internal
 
+-- | Configuration of TH macro for creating table instances
 data TableConfig = TableConfig {
-    tableSetup :: (Name, RangeType, Maybe String)
-  , globalIndexes :: [(Name, RangeType, Maybe String)]
-  , localIndexes :: [(Name, Maybe String)]
+    tableSetup :: (Name, RangeType, String)       -- ^ Table type, primary key type, table name
+  , globalIndexes :: [(Name, RangeType, String)]  -- ^ Global index type, primary key type, index name
+  , localIndexes :: [(Name, String)]              -- ^ Local index type, index name
+  , translateField :: String -> String            -- ^ Translation of haskell field names to DynamoDB attribute names
 }
+
+-- | Simple table configuration
 tableConfig ::
-     (Name, RangeType)   -- ^ Main record type name, bool indicates if it has a sort key
-  -> [(Name, RangeType)] -- ^ Global secondary index records, bool indicates if it has a sort key
+     (Name, RangeType)   -- ^ Table type name, primary key type
+  -> [(Name, RangeType)] -- ^ Global secondary index records, index key type
   -> [Name] -- ^ Local secondary index records
   -> TableConfig
 tableConfig (table, tbltype) globidx locidx =
     TableConfig {
-        tableSetup = (table, tbltype, Nothing)
-      , globalIndexes = map (\(n,r) -> (n, r, Nothing)) globidx
-      , localIndexes = map (, Nothing) locidx
+        tableSetup = (table, tbltype, nameToStr table)
+      , globalIndexes = map (\(n,r) -> (n, r, nameToStr n)) globidx
+      , localIndexes = map (\n -> (n, nameToStr n)) locidx
+      , translateField = defaultTranslate
     }
+  where
+    nameToStr (Name (OccName name) _) = name
 
--- | Translates haskell field names to database attribute names.
-translateFieldName :: String -> String
-translateFieldName = translate
+-- | Translates haskell field names to database attribute names. Strips everything up to first '_'.
+defaultTranslate :: String -> String
+defaultTranslate = translate
   where
     translate ('_':rest) = rest
     translate name
@@ -104,14 +112,14 @@ mkTableDefs migname TableConfig{..} =
   execWriterT $ do
     let (table, tblrange, tblname) = tableSetup
 
-    tblFieldNames <- getFieldNames table
+    tblFieldNames <- getFieldNames table translateField
     let tblHashName = fst (head tblFieldNames)
     buildColData tblFieldNames
-    genBaseCollection table tblrange tblname Nothing
+    genBaseCollection table tblrange tblname Nothing translateField
 
     -- Check, that hash key name in locindexes == hash key in primary table
     forM_ localIndexes $ \(idx, _) -> do
-        idxHashName <- (fst . head) <$> getFieldNames idx
+        idxHashName <- (fst . head) <$> getFieldNames idx translateField
         when (idxHashName /= tblHashName) $
             fail ("Hash key " <> show idxHashName <> " in local index " <> show idx
                   <> " is not equal to table hash key " <> show tblHashName)
@@ -119,9 +127,9 @@ mkTableDefs migname TableConfig{..} =
     -- Instances for indices
     let allindexes = globalIndexes ++ map (\(idx,name) -> (idx, WithRange, name)) localIndexes
     forM_ allindexes $ \(idx, idxrange, idxname) -> do
-        genBaseCollection idx idxrange idxname (Just table)
+        genBaseCollection idx idxrange idxname (Just table) translateField
         -- Check that all records from indices conform to main table and create instances
-        instfields <- getFieldNames idx
+        instfields <- getFieldNames idx translateField
         let pkeytable = [True | _ <- [1..(pkeySize idxrange)] ] ++ repeat False
         forM_ (zip instfields pkeytable) $ \((fieldname, ltype), isKey) ->
             case lookup fieldname tblFieldNames of
@@ -142,9 +150,9 @@ pkeySize WithRange = 2
 pkeySize NoRange = 1
 
 -- | Generate basic collection instances
-genBaseCollection :: Name -> RangeType -> Maybe String -> Maybe Name -> WriterT [Dec] Q ()
-genBaseCollection coll collrange mname mparent = do
-    tblFieldNames <- getFieldNames coll
+genBaseCollection :: Name -> RangeType -> String -> Maybe Name -> (String -> String) -> WriterT [Dec] Q ()
+genBaseCollection coll collrange tblname mparent translate = do
+    tblFieldNames <- getFieldNames coll translate
     let fieldNames = map fst tblFieldNames
     let fieldList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL) fieldNames))
     primaryList' <- case (collrange, fieldNames) of
@@ -153,7 +161,6 @@ genBaseCollection coll collrange mname mparent = do
                       _ -> fail "Table must have at least 1/2 fields based on range key"
     let primaryList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL) primaryList'))
     let tbltype = maybe (PromotedT 'IsTable) (const $ PromotedT 'IsIndex) mparent
-    tblname <- maybe (getTableTypeName coll) return mname
 
     lift (deriveGenericOnly coll) >>= tell
     lift [d|
@@ -183,25 +190,13 @@ genBaseCollection coll collrange mname mparent = do
     mrange WithRange = 'WithRange
     mrange NoRange = 'NoRange
 
--- | Reify and return a constructor name
-getTableTypeName :: Name -> WriterT [Dec] Q String
-getTableTypeName tbl = do
-    info <- lift $ reify tbl
-    case info of
-#if __GLASGOW_HASKELL__ >= 800
-        (TyConI (DataD _ (Name (OccName name) _) _ _ _ _)) -> return name
-#else
-        (TyConI (DataD _ (Name (OccName name) _) _ _ _)) -> return name
-#endif
-        _ -> fail ("Not a type declaration: " <> show tbl)
-
 -- | Reify name and return list of record fields with type
-getFieldNames :: Name -> WriterT [Dec] Q [(String, Type)]
-getFieldNames tbl = do
+getFieldNames :: Name -> (String -> String) -> WriterT [Dec] Q [(String, Type)]
+getFieldNames tbl translate = do
     info <- lift $ reify tbl
     case getRecords info of
       Left err -> fail $ "Table " <> show tbl <> ": " <> err
-      Right lst -> return $ map (over _1 translateFieldName) lst
+      Right lst -> return $ map (over _1 translate) lst
   where
     getRecords :: Info -> Either String [(String, Type)]
 #if __GLASGOW_HASKELL__ >= 800
@@ -241,15 +236,15 @@ say :: Monad m => t -> WriterT [t] m ()
 say a = tell [a]
 
 -- | Derive 'DynamoEncodable' and prepare column instances for nested structures.
-deriveCollection :: Name -> Q [Dec]
-deriveCollection table =
+deriveCollection :: Name -> (String -> String) -> Q [Dec]
+deriveCollection table translate =
   execWriterT $ do
     lift (deriveGenericOnly table) >>= tell
     -- Create column data
-    tblFieldNames <- getFieldNames table
+    tblFieldNames <- getFieldNames table translate
     buildColData tblFieldNames
     -- Create instance DynamoEncodable
-    deriveEncodable table
+    deriveEncodable table translate
 
 -- | Derive just the 'DynamoEncodable' instance
 -- for structures that were already derived using 'mkTableDefs'
@@ -258,15 +253,15 @@ deriveCollection table =
 -- Creates:
 --
 -- > instance DynamoEncodable Type where
--- >   dEncode val = Just (attributeValue & avM .~ gdEncode val)
--- >   dDecode (Just attr) = gdDecode (attr ^. avM)
+-- >   dEncode val = Just (attributeValue & avM .~ gdEncodeG [fieldnames] val)
+-- >   dDecode (Just attr) = gdDecodeG [fieldnames] (attr ^. avM)
 -- >   dDecode Nothing = Nothing
 -- > instance InCollection column_type P_Column1 'NestedPath
 -- > instance InCollection column_type P_Column2 'NestedPath
 -- > ...
-deriveEncodable :: Name -> WriterT [Dec] Q ()
-deriveEncodable table = do
-    tblFieldNames <- getFieldNames table
+deriveEncodable :: Name -> (String -> String) -> WriterT [Dec] Q ()
+deriveEncodable table translate = do
+    tblFieldNames <- getFieldNames table translate
     let fieldList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL . fst) tblFieldNames))
     lift [d|
       instance DynamoEncodable $(pure (ConT table)) where

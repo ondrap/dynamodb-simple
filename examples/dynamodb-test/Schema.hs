@@ -15,7 +15,6 @@ import           Data.Time.Clock.POSIX      (POSIXTime, posixSecondsToUTCTime,
                                              utcTimeToPOSIXSeconds)
 import           Data.UUID                  (UUID)
 import qualified Data.UUID                  as UUID
-import qualified GHC.Generics               as GHC
 import qualified Network.AWS.DynamoDB.Types as D
 import qualified Data.Set                   as Set
 
@@ -65,8 +64,8 @@ data Author = Author {
   , autFirstName :: T.Text
   , autLastName  :: T.Text
   , autGender    :: Gender
-} deriving (Show, GHC.Generic)
-deriveCollection ''Author
+} deriving (Show)
+deriveCollection ''Author defaultTranslate
 
 data Article = Article {
     artUuid       :: ArticleUUID
@@ -77,7 +76,7 @@ data Article = Article {
   , artAuthor     :: Author
   , artCoauthor   :: Maybe Author
   , artTags       :: Set.Set Tag
-} deriving (Show, GHC.Generic)
+} deriving (Show)
 
 data ArticleIndex = ArticleIndex {
     i_artCategory  :: Category
@@ -85,14 +84,14 @@ data ArticleIndex = ArticleIndex {
   , i_artTitle     :: T.Text
   , i_artAuthor    :: Author
   , i_artTags      :: Set.Set Tag
-} deriving (Show, GHC.Generic)
+} deriving (Show)
 
 data AuthorIndex = AuthorIndex {
     a_artAuthorUuid :: AuthorUUID
   , a_artPublished  :: UTCTime
   , a_artTitle      :: T.Text
   , a_artTags       :: Set.Set Tag
-} deriving (Show, GHC.Generic)
+} deriving (Show)
 
 mkTableDefs "migrateTables" (tableConfig (''Article, NoRange)
                                          [(''ArticleIndex, WithRange), (''AuthorIndex, WithRange)]

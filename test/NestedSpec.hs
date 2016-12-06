@@ -42,7 +42,7 @@ data Inner = Inner {
   , _nSecond :: Maybe Int
   , _nThird :: T.Text
 } deriving (Show, Eq)
-deriveCollection ''Inner
+deriveCollection ''Inner defaultTranslate
 makeLenses ''Inner
 
 data Test = Test {
