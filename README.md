@@ -54,13 +54,12 @@ test = do
 - Automatic handling of invalid values (empty strings, empty sets). Automatic rewriting of
   queries when searching for these empty values.
 - Compatible with GHC8 `DuplicateRecordFields`
-- Customizable table and index names.
+- Customizable table and index names. Custom translation of field names to attribute names.
 - Streaming settings.
 
 ### What is planned
 
 - Support for automatic versioning of fields.
-- Custom translation of field names to attribute names.
 
 ### Limitations
 

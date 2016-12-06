@@ -1,6 +1,7 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 -- | Module for creating update actions
 --
@@ -45,16 +46,11 @@ data ActionValue =
     | Minus NameGen AttributeValue -- Subtract number from existing value
 
 -- | An action for UpdateItem functions.
-data Action t = Action [Set] [Add] [Delete] [Remove]
-
-instance Semigroup (Action t) where
-  Action a1 b1 c1 d1 <> Action a2 b2 c2 d2 = Action (a1 <> a2) (b1 <> b2) (c1 <> c2) (d1 <> d2)
-instance Monoid (Action t) where
-  mappend = (<>)
-  mempty = Action [] [] [] []
+newtype Action t = Action ([Set], [Add], [Delete], [Remove])
+  deriving (Semigroup, Monoid)
 
 isNoopAction :: Action t -> Bool
-isNoopAction (Action [] [] [] []) = True
+isNoopAction (Action ([], [], [], [])) = True
 isNoopAction _ = False
 
 data Set = Set NameGen ActionValue  -- General SET
@@ -66,27 +62,27 @@ class ActionClass a where
   dumpAction :: a -> Supply T.Text (T.Text, HashMap T.Text T.Text, HashMap T.Text AttributeValue)
   asAction :: a -> Action t
 instance ActionClass Set where
-  asAction a = Action [a] [] [] []
+  asAction a = Action ([a], [], [], [])
   dumpAction (Set name val) = do
     (subst, attrnames) <- name supplyName
     (expr, exprattr, valnames) <- mkActionVal val
     return (subst <> " = " <> expr, attrnames <> exprattr, valnames)
 instance ActionClass Add where
-  asAction a = Action [] [a] [] []
+  asAction a = Action ([], [a], [], [])
   dumpAction (Add name val) = do
     (subst, attrnames) <- name supplyName
     idval <- supplyValue
     let valnames = HMap.singleton idval val
     return (subst <> " " <> idval, attrnames, valnames)
 instance ActionClass Delete where
-  asAction a = Action [] [] [a] []
+  asAction a = Action ([], [], [a], [])
   dumpAction (Delete name val) = do
     (subst, attrnames) <- name supplyName
     idval <- supplyValue
     let valnames = HMap.singleton idval val
     return (subst <> " " <> idval, attrnames, valnames)
 instance ActionClass Remove where
-  asAction a = Action [] [] [] [a]
+  asAction a = Action ([], [], [], [a])
   dumpAction (Remove name) = do
     (subst, attrnames) <- name supplyName
     return (subst, attrnames, HMap.empty)
@@ -94,7 +90,7 @@ instance ActionClass Remove where
 
 -- | Generate an action expression and associated structures from a list of actions
 dumpActions :: Action t -> Maybe (T.Text, HashMap T.Text T.Text, HashMap T.Text AttributeValue)
-dumpActions action@(Action iset iadd idelete iremove)
+dumpActions action@(Action (iset, iadd, idelete, iremove))
   | isNoopAction action = Nothing
   | otherwise = Just $ evalSupply eval nameSupply
   where
