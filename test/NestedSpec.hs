@@ -57,7 +57,7 @@ data Test = Test {
   , _iList     :: [Inner]
   , _iMap      :: HashMap Name Inner
 } deriving (Show, GHC.Generic, Eq)
-mkTableDefs "migrateTest" (''Test, WithRange) [] []
+mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
 makeLenses ''Test
 
 withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
@@ -73,7 +73,7 @@ withDb msg code = it msg runcode
                        -- & set envLogger lgr
       runResourceT $ runAWS newenv $ do
           deleteTable (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
-          migrateTest (provisionedThroughput 5 5) (provisionedThroughput 5 5)
+          migrateTest mempty
           code `finally` deleteTable (Proxy :: Proxy Test)
 
 spec :: Spec

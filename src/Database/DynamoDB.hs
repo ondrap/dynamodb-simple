@@ -265,3 +265,5 @@ itemToKey a = (Proxy, dItemToKey a)
 --        item <- getItem Eventually ("news", "1-2-3-4")
 --        liftIO $ print (item :: Maybe Test)
 -- @
+--
+-- See examples and test directories for more detail examples.

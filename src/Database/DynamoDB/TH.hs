@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Template Haskell macros to automatically derive instances, create column datatypes
 --  and create migrations functions.
@@ -15,15 +16,18 @@ module Database.DynamoDB.TH (
     -- * Sparse indexes
     -- $sparse
 
-    -- * Macros
+    -- * Main table definition
     mkTableDefs
+  , TableConfig(..)
+  , tableConfig
+    -- * Nested structures
   , deriveCollection
   , deriveEncodable
     -- * Data types
   , RangeType(..)
 ) where
 
-import           Control.Lens                    (ix, over, (.~), (^.), _1)
+import           Control.Lens                    (ix, over, (.~), (^.), _1, view)
 import           Control.Monad                   (forM_, when)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
@@ -31,6 +35,7 @@ import           Data.Char                       (toUpper)
 import           Data.Function                   ((&))
 import           Data.Monoid                     ((<>))
 import qualified Data.Text                       as T
+import           Data.HashMap.Strict             (HashMap)
 import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
@@ -42,6 +47,23 @@ import           Database.DynamoDB.Migration     (runMigration)
 import           Database.DynamoDB.Types
 import           Database.DynamoDB.Internal
 
+data TableConfig = TableConfig {
+    tableSetup :: (Name, RangeType, Maybe String)
+  , globalIndexes :: [(Name, RangeType, Maybe String)]
+  , localIndexes :: [(Name, Maybe String)]
+}
+tableConfig ::
+     (Name, RangeType)   -- ^ Main record type name, bool indicates if it has a sort key
+  -> [(Name, RangeType)] -- ^ Global secondary index records, bool indicates if it has a sort key
+  -> [Name] -- ^ Local secondary index records
+  -> TableConfig
+tableConfig (table, tbltype) globidx locidx =
+    TableConfig {
+        tableSetup = (table, tbltype, Nothing)
+      , globalIndexes = map (\(n,r) -> (n, r, Nothing)) globidx
+      , localIndexes = map (, Nothing) locidx
+    }
+
 -- | Create instances, datatypes for table, fields and instances.
 --
 -- Example of what gets created:
@@ -49,7 +71,7 @@ import           Database.DynamoDB.Internal
 -- > data Test { first :: Text, second :: Text, third :: Int } deriving (GHC.Generic)
 -- > data TestIndex { third :: Int, second :: T.Text} deriving (GHC.Generic)
 -- >
--- > mkTableDefs (''Test, WithRange) [(''TestIndex, NoRange)] []
+-- > mkTableDefs (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
 -- >
 -- > instance Generic Test
 -- > instance HasDatatypeInfo Test
@@ -68,27 +90,28 @@ import           Database.DynamoDB.Internal
 -- > colFirst = Column
 mkTableDefs ::
     String -- ^ Name of the migration function
-  -> (Name, RangeType)      -- ^ Main record type name, bool indicates if it has a sort key
-  -> [(Name, RangeType)] -- ^ Global secondary index records, bool indicates if it has a sort key
-  -> [Name] -- ^ Local secondary index records
+  -> TableConfig
   -> Q [Dec]
-mkTableDefs migname (table, tblrange) globindexes locindexes =
+mkTableDefs migname TableConfig{..} =
   execWriterT $ do
+    let (table, tblrange, tblname) = tableSetup
+
     tblFieldNames <- getFieldNames table
     let tblHashName = fst (head tblFieldNames)
     buildColData tblFieldNames
-    genBaseCollection table tblrange Nothing
+    genBaseCollection table tblrange tblname Nothing
 
     -- Check, that hash key name in locindexes == hash key in primary table
-    forM_ locindexes $ \idx -> do
+    forM_ localIndexes $ \(idx, _) -> do
         idxHashName <- (fst . head) <$> getFieldNames idx
         when (idxHashName /= tblHashName) $
             fail ("Hash key " <> show idxHashName <> " in local index " <> show idx
                   <> " is not equal to table hash key " <> show tblHashName)
 
     -- Instances for indices
-    forM_ (globindexes ++ map (,WithRange) locindexes) $ \(idx, idxrange) -> do
-        genBaseCollection idx idxrange (Just table)
+    let allindexes = globalIndexes ++ map (\(idx,name) -> (idx, WithRange, name)) localIndexes
+    forM_ allindexes $ \(idx, idxrange, idxname) -> do
+        genBaseCollection idx idxrange idxname (Just table)
         -- Check that all records from indices conform to main table and create instances
         instfields <- getFieldNames idx
         let pkeytable = [True | _ <- [1..(pkeySize idxrange)] ] ++ repeat False
@@ -103,7 +126,7 @@ mkTableDefs migname (table, tblrange) globindexes locindexes =
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
 
-    migfunc <- lift $ mkMigrationFunc migname table (map fst globindexes) locindexes
+    migfunc <- lift $ mkMigrationFunc migname table (map (view _1) globalIndexes) (map (view _1) localIndexes)
     tell migfunc
 
 pkeySize :: RangeType -> Int
@@ -111,23 +134,36 @@ pkeySize WithRange = 2
 pkeySize NoRange = 1
 
 -- | Generate basic collection instances
-genBaseCollection :: Name -> RangeType -> Maybe Name -> WriterT [Dec] Q ()
-genBaseCollection coll collrange mparent = do
+genBaseCollection :: Name -> RangeType -> Maybe String -> Maybe Name -> WriterT [Dec] Q ()
+genBaseCollection coll collrange mname mparent = do
     lift [d|
       instance Generic $(pure (ConT coll))
       instance HasDatatypeInfo $(pure (ConT coll))
       |] >>= tell
-    case mparent of
-      Nothing ->
+    case (mname, mparent) of
+      (Nothing, Nothing) ->
         lift [d|
             instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
             instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange))
              |] >>= tell
-      Just parent ->
+      (Just name, Nothing) ->
+         lift [d|
+             instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
+             instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) where
+                tableName _ = $(pure $ LitE (StringL name))
+              |] >>= tell
+      (Nothing, Just parent) ->
         lift [d|
             instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsIndex
             instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange))
               |] >>= tell
+      (Just name, Just parent) ->
+        lift [d|
+            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsIndex
+            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) where
+                indexName _ = $(pure $ LitE (StringL name))
+              |] >>= tell
+
 
     tblFieldNames <- getFieldNames coll
     -- Skip primary key, we cannot filter by it
@@ -235,9 +271,8 @@ mkMigrationFunc name table globindexes locindexes = do
     let funcname = mkName name
     m <- newName "m"
     let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)]
-                                  (AppT (AppT ArrowT (ConT ''ProvisionedThroughput))
-                                  (AppT (AppT ArrowT (ConT ''ProvisionedThroughput))
-                                  (AppT (VarT m) (TupleT 0)))))
+                                  (AppT (AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text))
+                                  (ConT ''ProvisionedThroughput))) (AppT (VarT m) (TupleT 0))))
     return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
               (SigE (ConE 'Proxy)
               (AppT (ConT ''Proxy)
@@ -273,7 +308,7 @@ mkMigrationFunc name table globindexes locindexes = do
 --   , i_tDate :: T.Text
 --   , i_tDescr :: T.Text
 -- } deriving (Show, GHC.Generic)
--- mkTableDefs "migrate" (''Test, WithRange) [(''TestIndex, NoRange)] []
+-- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
 -- @
 --
 
@@ -294,10 +329,24 @@ mkMigrationFunc name table globindexes locindexes = do
 --   , _tBase :: T.Text
 --   , _tBooks :: [Book]
 -- } deriving (Show, GHC.Generic)
--- mkTableDefs "migrate" (''Test, WithRange) [] []
+-- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 -- @
 
 -- $sparse
+-- Define sparse index by defining the attribute as "Maybe" in the main table and
+-- directly in the index table.
 --
-
+-- @
+-- data Table {
+--    hashKey :: UUID
+--  , published :: Maybe UTCTime
+--  , ...
+-- }
+-- data PublishedIndex {
+--     published :: UTCTime
+--  ,  hashKey :: UUID
+--  ,  ...
+-- }
+-- mkTableDefs "migrate" (tableConfig (''Table, NoRange) [(''PublishedIndex, NoRange)] [])
+-- @
 --

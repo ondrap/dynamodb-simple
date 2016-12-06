@@ -14,7 +14,8 @@ data Test = Test {
   , subject  :: T.Text
   , replies  :: Int
 } deriving (Show, GHC.Generic)
-mkTableDefs "migrate" (''Test, WithRange) [] []
+-- Generate instances and colCategory, colUser etc. variables for queries/updates
+mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 
 test :: IO ()
 test = do
@@ -25,7 +26,7 @@ test = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   let newenv = env & configure dynamo & set envLogger lgr
   runResourceT $ runAWS newenv $ do
-      migrate  (provisionedThroughput 5 5) [] -- Create tables, indices etc.
+      migrate  mempty -- Create tables, indices etc.
       --
       putItem (Test "news" "john" "test" 20)
       --
@@ -53,12 +54,12 @@ test = do
 - Automatic handling of invalid values (empty strings, empty sets). Automatic rewriting of
   queries when searching for these empty values.
 - Compatible with GHC8 `DuplicateRecordFields`
+- Customizable table and index names.
 
 ### What is planned
 
-- Table name customization.
-- Translation of field names to attribute names.
 - Support for automatic versioning of fields.
+- Custom translation of field names to attribute names.
 
 ### Limitations
 
@@ -88,3 +89,9 @@ Empty string and empty set are represented by omitting the value.
   (i.e. after schema change).
 * Empty list/empty hashmap is represented as empty list/hashmap; however it is allowed to be decoded
   even when the attribute is missing in order to allow better schema migrations.
+
+### Notes
+
+There is a bug in `amazonka-dynamodb` that causes the `Conduit`-based queries/scans not behave correctly
+under certain circumstances. It's also why the travis CI build of dynamodb-simple is failing
+right now. 

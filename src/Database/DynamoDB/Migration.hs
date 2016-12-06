@@ -11,6 +11,7 @@ module Database.DynamoDB.Migration (
   runMigration
 ) where
 
+import           Control.Arrow                      (first)
 import           Control.Concurrent                 (threadDelay)
 import           Control.Lens                       (_1, set, view, (%~), (.~),
                                                      (^.), (^..), (^?), _Just)
@@ -24,7 +25,7 @@ import           Data.Foldable                      (toList)
 import           Data.Function                      ((&))
 import qualified Data.HashMap.Strict                as HMap
 import           Data.List                          (nub, (\\))
-import           Data.Maybe                         (mapMaybe)
+import           Data.Maybe                         (mapMaybe, fromMaybe)
 import           Data.Monoid                        ((<>))
 import           Data.Proxy
 import qualified Data.Set                           as Set
@@ -229,13 +230,12 @@ runMigration :: (TableCreate table r, MonadAWS m, Code table ~ '[ hash ': range 
   =>  Proxy table
   -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])]
   -> [(D.LocalSecondaryIndex, [D.AttributeDefinition])]
-  -> D.ProvisionedThroughput
-  -> D.ProvisionedThroughput
+  -> HMap.HashMap T.Text D.ProvisionedThroughput
   -> m ()
-runMigration ptbl globindices' locindices tblprov idxprov =
+runMigration ptbl globindices' locindices provisionMap =
   liftAWS $ do
-      let tbl = createTable ptbl tblprov
-          globindices = map ($ idxprov) globindices'
+      let tbl = createTable ptbl (getProv (tableName ptbl))
+          globindices = map (first adjustProv . ($ defaultprov)) globindices'
           idxattrs = concatMap snd globindices ++ concatMap snd locindices
       -- Bug in amazonka, we must not set the attribute if it is empty
       -- see https://github.com/brendanhay/amazonka/issues/332
@@ -243,3 +243,7 @@ runMigration ptbl globindices' locindices tblprov idxprov =
                       & bool (D.ctLocalSecondaryIndexes .~ map fst locindices) id (null locindices)
                       & D.ctAttributeDefinitions %~ (nub . (<> idxattrs))
       createOrMigrate final
+  where
+    getProv name = fromMaybe defaultprov (HMap.lookup name provisionMap)
+    defaultprov = D.provisionedThroughput 5 5
+    adjustProv idx = idx & (D.gsiProvisionedThroughput .~ getProv (idx ^. D.gsiIndexName))

@@ -264,7 +264,7 @@ defaultPutItem item = D.putItem tblname & D.piItem .~ gdEncode item
 defaultCreateTable :: (DynamoTable a 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v hash)
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTable p thr =
-    D.createTable (gdConstrName p) (hashKey :| []) thr
+    D.createTable (tableName p) (hashKey :| []) thr
       & D.ctAttributeDefinitions .~ keyDefs
   where
     (firstname, firstproxy) = gdHashField p
@@ -274,7 +274,7 @@ defaultCreateTable p thr =
 defaultCreateTableRange :: (DynamoTable a 'WithRange, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTableRange p thr =
-    D.createTable (gdConstrName p) (hashKey :| [rangeKey]) thr
+    D.createTable (tableName p) (hashKey :| [rangeKey]) thr
       & D.ctAttributeDefinitions .~ keyDefs
   where
     (hashname, hashproxy) = gdHashField p
