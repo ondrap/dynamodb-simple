@@ -136,36 +136,40 @@ pkeySize NoRange = 1
 -- | Generate basic collection instances
 genBaseCollection :: Name -> RangeType -> Maybe String -> Maybe Name -> WriterT [Dec] Q ()
 genBaseCollection coll collrange mname mparent = do
+    tblFieldNames <- getFieldNames coll
+    let fieldNames = map fst tblFieldNames
+    let fieldList = pure (ListE (map (LitE . StringL) fieldNames))
+    primaryList' <- case (collrange, fieldNames) of
+                      (NoRange, hashname:_) -> return [hashname]
+                      (WithRange, h:r:_)-> return [h,r]
+                      _ -> fail "Table must have at least 1/2 fields based on range key"
+    let primaryList = pure (ListE (map (LitE . StringL) primaryList'))
+    let tbltype = maybe (PromotedT 'IsTable) (const $ PromotedT 'IsIndex) mparent
+
     lift [d|
       instance Generic $(pure (ConT coll))
       instance HasDatatypeInfo $(pure (ConT coll))
+      instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) $(pure tbltype) where
+          allFieldNames _ = $(fieldList)
+          primaryFields _ = $(primaryList)
       |] >>= tell
     case (mname, mparent) of
       (Nothing, Nothing) ->
-        lift [d|
-            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
-            instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange))
-             |] >>= tell
+        lift [d|instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange))|] >>= tell
       (Just name, Nothing) ->
          lift [d|
-             instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsTable
              instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) where
                 tableName _ = $(pure $ LitE (StringL name))
               |] >>= tell
       (Nothing, Just parent) ->
-        lift [d|
-            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsIndex
-            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange))
-              |] >>= tell
+        lift [d|instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange))|]
+              >>= tell
       (Just name, Just parent) ->
         lift [d|
-            instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) 'IsIndex
             instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) where
                 indexName _ = $(pure $ LitE (StringL name))
               |] >>= tell
 
-
-    tblFieldNames <- getFieldNames coll
     -- Skip primary key, we cannot filter by it
     let constrNames = mkConstrNames tblFieldNames
     forM_ (drop (pkeySize collrange) constrNames) $ \constr ->
@@ -250,13 +254,14 @@ deriveCollection table =
 -- > ...
 deriveEncodable :: Name -> WriterT [Dec] Q ()
 deriveEncodable table = do
+    tblFieldNames <- getFieldNames table
+    let fieldList = pure (ListE (map (LitE . StringL . fst) tblFieldNames))
     lift [d|
       instance DynamoEncodable $(pure (ConT table)) where
-          dEncode val = Just (attributeValue & avM .~ gdEncode val)
+          dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
           dDecode (Just attr) = gdDecode (attr ^. avM)
           dDecode Nothing = Nothing
       |] >>= tell
-    tblFieldNames <- getFieldNames table
     let constrs = mkConstrNames tblFieldNames
     forM_ constrs $ \constr ->
       lift [d|

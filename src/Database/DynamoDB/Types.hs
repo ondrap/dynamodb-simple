@@ -26,7 +26,6 @@ module Database.DynamoDB.Types (
     -- * Query datatype
   , RangeOper(..)
     -- * Utility functions
-  , gdEncode
   , gdDecode
   , translateFieldName
   , dType
@@ -44,7 +43,7 @@ import           Data.Function               ((&))
 import           Data.Hashable               (Hashable)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
-import           Data.Maybe                  (catMaybes, mapMaybe)
+import           Data.Maybe                  (mapMaybe)
 import           Data.Proxy
 import           Data.Scientific             (Scientific, floatingOrInteger,
                                               fromFloatDigits, toBoundedInteger,
@@ -267,30 +266,6 @@ instance DynamoEncodable AE.Value where
   --
   dIsMissing AE.Null = True
   dIsMissing _ = False
-
--- | Encode a record to hashmap using generic-sop.
-gdEncode :: forall a. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a))
-  => a -> HashMap T.Text AttributeValue
-gdEncode a =
-  HMap.fromList $
-    case datatypeInfo (Proxy :: Proxy a) of
-      ADT _ _ cs -> gdEncode' cs (from a)
-      Newtype _ _ c -> gdEncode' (c :* Nil) (from a)
-  where
-    gdEncode' :: All2 DynamoEncodable xs => NP ConstructorInfo xs -> SOP I xs -> [(T.Text, AttributeValue)]
-    gdEncode' cs (SOP sop) = hcollapse $ hcliftA2 palldynamo gdEncodeRec cs sop
-
-    gdEncodeRec :: All DynamoEncodable xs => ConstructorInfo xs -> NP I xs -> K [(T.Text, AttributeValue)] xs
-    gdEncodeRec (Record _ ns) xs =
-        K $ catMaybes $ hcollapse
-          $ hcliftA2 pdynamo (\(FieldInfo name) (I val) -> K ((translateFieldName name,) <$> dEncode val)) ns xs
-    gdEncodeRec _ _ = error "Cannot serialize non-record types."
-
-    palldynamo :: Proxy (All DynamoEncodable)
-    palldynamo = Proxy
-
-    pdynamo :: Proxy DynamoEncodable
-    pdynamo = Proxy
 
 -- | Decode hashmap to a record using generic-sop.
 gdDecode ::

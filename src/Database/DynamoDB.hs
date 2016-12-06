@@ -65,13 +65,11 @@ module Database.DynamoDB (
   , itemToKey
 ) where
 
-import           Prelude                             hiding (head)
 import           Control.Lens                        ((%~), (.~), (^.))
 import           Control.Monad                       (void)
 import           Control.Monad.Catch                 (throwM)
 import           Data.Bool                           (bool)
 import           Data.Function                       ((&))
-import           Data.List.NonEmpty                  (head)
 import           Data.Proxy
 import           Data.Semigroup                      ((<>))
 import qualified Data.Text                           as T

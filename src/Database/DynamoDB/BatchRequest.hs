@@ -80,7 +80,7 @@ putItemBatch lst = mapM_ go (chunkBatch 25 lst)
     go items = do
       let tblname = tableName (Proxy :: Proxy a)
           wrequests = fmap mkrequest items
-          mkrequest item = D.writeRequest & D.wrPutRequest .~ Just (D.putRequest & D.prItem .~ gdEncode item)
+          mkrequest item = D.writeRequest & D.wrPutRequest .~ Just (D.putRequest & D.prItem .~ gsEncode item)
           cmd = D.batchWriteItem & D.bwiRequestItems . at tblname .~ Just wrequests
       retryWriteBatch cmd
 
