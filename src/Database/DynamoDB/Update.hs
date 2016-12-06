@@ -10,8 +10,8 @@
 -- > updateItemByKey_ (Proxy :: Proxy Test, ("hashkey", "sortkey"))
 -- >                  ((colIInt +=. 5) <> (colIText =. "updated") <> (colIMText =. Nothing))
 --
--- The unique "Action" can be added together using the "<>" operator. You are not supposed
--- to operate on the same structure simultaneously using multiple commands.
+-- The unique "Action" can be added together using the '<>' operator. You are not supposed
+-- to operate on the same attribute simultaneously using multiple actions.
 module Database.DynamoDB.Update (
     Action
     -- * Update action
@@ -45,7 +45,7 @@ data ActionValue =
     | Plus NameGen AttributeValue -- Add number to existing value
     | Minus NameGen AttributeValue -- Subtract number from existing value
 
--- | An action for UpdateItem functions.
+-- | An action for 'Database.DynamoDB.updateItemByKey' functions.
 newtype Action t = Action ([Set], [Add], [Delete], [Remove])
   deriving (Semigroup, Monoid)
 

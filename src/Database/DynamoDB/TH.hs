@@ -93,13 +93,19 @@ defaultTranslate = translate
 -- >
 -- > deriveGenericOnly ''Test
 -- > instance DynamoCollection Test WithRange IsTable
+-- > ...
 -- > instance DynamoTable Test WithRange
+-- >    tableName _ = "Test"
 -- >
 -- > deriveGenericOnly ''TestIndex
 -- > instance DynamoCollection TestIndex NoRange IsIndex
+-- > ...
 -- > instance DynamoIndex TestIndex Test NoRange IsIndex
+-- >    indexName _ = "TestIndex"
 -- >
 -- > data P_First
+-- > instance ColumnInfo P_First where
+-- >     columnName _ = "first"
 -- > instance InCollection P_First Test 'NestedPath -- For every attribute
 -- > instance InCollection P_Second TestIndex 'FullPath -- For every non-primary attribute
 -- > colFirst :: Column Text TypColumn P_First
@@ -303,11 +309,11 @@ mkMigrationFunc name table globindexes locindexes = do
 -- that creates table and updates the indexes.
 --
 -- The migration function has signature:
---   MonadAWS m => HashMap T.Text ProvisionedThroughput -> Maybe StreamViewType -> m0 ()
 --
--- * Table is named after a constructor of the datatype (Test)
+-- >  MonadAWS m => HashMap T.Text ProvisionedThroughput -> Maybe StreamViewType -> m0 ()
+--
+-- * Table by default equals name of the type.
 -- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.
---   Underscore is not mandatory.
 -- * Column name is capitalized attribute name with prepended 'col' ('colTId')
 -- * Attribute names in an index table must be the same as Attribute names in the main table
 -- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId')
@@ -339,7 +345,7 @@ mkMigrationFunc name table globindexes locindexes = do
 --      author :: T.Text
 --    , title :: T.Text
 -- } deriving (Show)
--- $(deriveCollection ''Book)
+-- $(deriveCollection ''Book defaultTranslate)
 --
 -- data Test = Test {
 --     _tId :: Int

@@ -157,7 +157,7 @@ queryCond key range cond direction limit = do
 
 -- | Fetch exactly the required count of items even when
 -- it means more calls to dynamodb. Return last evaluted key if end of data
--- was not reached.
+-- was not reached. Use 'qStartKey' to continue reading the query.
 query :: forall a t v1 v2 m range hash rest.
   (TableQuery a t, DynamoCollection a 'WithRange t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
    DynamoScalar v1 hash, DynamoScalar v2 range)
@@ -231,6 +231,8 @@ scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash
 scanSource q = paginate (scanCmd q) =$= rsDecode (view D.srsItems)
 
 -- | Function to call bounded scans. Tries to return exactly requested number of items.
+--
+-- Use 'sStartKey' to continue the scan.
 scan :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t, HasPrimaryKey a r t)
   => ScanOpts a r  -- ^ Scan settings
   -> Int  -- ^ Required result count

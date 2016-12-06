@@ -31,17 +31,17 @@ import qualified Network.AWS.DynamoDB.Types as D
 import           Database.DynamoDB.Internal
 import           Database.DynamoDB.Types
 
--- | Numeric/string range comparison
+-- | Numeric/string range comparison.
 between :: (Ord typ, InCollection col tbl 'FullPath, DynamoScalar v typ)
   => Column typ ctyp col -> (typ, typ) -> FilterCondition tbl
 between col (a, b) = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
--- | a IN (b, c, d); the list may contain up to 100 values
+-- | a IN (b, c, d); the list may contain up to 100 values.
 valIn :: (InCollection col tbl 'FullPath, DynamoScalar v typ)
   => Column typ ctyp col -> [typ] -> FilterCondition tbl
 valIn col lst = In (nameGen col) (map dScalarEncode lst)
 
--- | Check existence of attribute
+-- | Check existence of attribute.
 attrExists :: (InCollection col tbl 'FullPath) => Column typ 'TypColumn col -> FilterCondition tbl
 attrExists col = AttrExists (nameGen col)
 
@@ -49,7 +49,7 @@ attrExists col = AttrExists (nameGen col)
 attrMissing :: (InCollection col tbl 'FullPath) => Column typ 'TypColumn col -> FilterCondition tbl
 attrMissing col = AttrMissing (nameGen col)
 
--- | Comparison for text columns
+-- | Comparison for text columns.
 beginsWith :: (InCollection col tbl 'FullPath, IsText typ)
   => Column typ 'TypColumn col -> T.Text -> FilterCondition tbl
 beginsWith col txt = BeginsWith (nameGen col) (dScalarEncode txt)
@@ -64,7 +64,7 @@ setContains :: (InCollection col tbl 'FullPath, DynamoScalar v a)
   => Column (Set.Set a) 'TypColumn col -> a -> FilterCondition tbl
 setContains col txt = Contains (nameGen col) (dScalarEncode txt)
 
--- | Size (i.e. number of bytes) of saved attribute
+-- | Size (i.e. number of bytes) of saved attribute.
 size :: Column typ 'TypColumn col -> Column Int 'TypSize col
 size (Column lst) = Size lst
 
@@ -75,7 +75,7 @@ dcomp op col val = Comparison (nameGen col) op encval
     -- Ord comparing against nothing doesn't make much sense - failback to NULL
     encval = fromMaybe (D.attributeValue & D.avNULL .~ Just True) (dEncode val)
 
--- | AND for combining conditions
+-- | AND for combining conditions.
 (&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t
 (&&.) = And
 infixr 3 &&.
@@ -86,6 +86,8 @@ infixr 3 &&.
 infixr 3 ||.
 
 -- | Tests for equality. Automatically adjusts query to account for missing attributes.
+--
+-- Note: checks against empty values esentially translate to 'attrMissing'.
 (==.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ)
   => Column typ ctyp col -> typ -> FilterCondition tbl
 (==.) col val =

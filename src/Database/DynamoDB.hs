@@ -214,7 +214,8 @@ updateItemCond_ (p, pkey) actions cond
 deleteTable :: (MonadAWS m, DynamoTable a r) => Proxy a -> m ()
 deleteTable p = void $ send (D.deleteTable (tableName p))
 
--- | Extract primary key from a record in a form, that can be directly used by other functions
+-- | Extract primary key from a record in a form that can be directly used by other functions.
+--
 -- TODO: this should be callable on index structures containing primary key as well
 itemToKey :: (HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss]) => a -> (Proxy a, PrimaryKey (Code a) r)
 itemToKey a = (Proxy, dItemToKey a)
@@ -247,7 +248,13 @@ itemToKey a = (Proxy, dItemToKey a)
 --   , subject :: T.Text
 -- } deriving (Show)
 -- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
+-- @
 --
+-- This code creates appropriate instances for the table and the columns. It creates
+-- global variables `colCategory`, `colMessageid` and `colSubject` that can be used
+-- in filtering conditions or update queries.
+--
+-- @
 -- main = do
 --    lgr <- newLogger Info stdout
 --    env <- newEnv NorthVirginia Discover
@@ -256,10 +263,15 @@ itemToKey a = (Proxy, dItemToKey a)
 --    let newenv = env & configure dynamo
 --                     & set envLogger lgr
 --    runResourceT $ runAWS newenv $ do
---        migrate mempty Nothing -- Create tables, indexes
+--        -- Create tables and indexes
+--        migrate mempty Nothing
+--        -- Save data to database
 --        putItem (Test "news" "1-2-3-4" "New subject")
---        item <- getItem Eventually ("news", "1-2-3-4")
---        liftIO $ print (item :: Maybe Test)
+--        -- Fetch data given primary key
+--        (item :: Maybe Test) <- getItem Eventually ("news", "1-2-3-4")
+--        liftIO $ print item
+--        -- Scan data using filter condition, return 10 results
+--        (items :: [Test]) <- scanCond (colSubject ==. "New subejct") 10
 -- @
 --
--- See examples and test directories for more detail examples.
+-- See examples/ and test/ directories for more detail examples.

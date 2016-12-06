@@ -63,6 +63,7 @@ data DynamoException = DynamoException T.Text
   deriving (Show)
 instance Exception DynamoException
 
+-- | Datatype for encoding scalar values
 data ScalarValue (v :: D.ScalarAttributeType) where
     ScS :: !T.Text -> ScalarValue 'D.S
     ScN :: !Scientific -> ScalarValue 'D.N
@@ -102,6 +103,10 @@ dSetDecode :: (Ord a, DynamoScalar v a) => AttributeValue -> Maybe (Set.Set a)
 dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.fromList
 
 -- | Typeclass signifying that this is a scalar attribute and can be used as a hash/sort key.
+--
+-- > instance DynamoScalar Network.AWS.DynamoDB.Types.S T.Text where
+-- >    scalarEncode = ScS
+-- >    scalarDecode (ScS txt) = Just txt
 class (ScalarAuto v, DynamoEncodable a) => DynamoScalar (v :: D.ScalarAttributeType) a | a -> v where
   -- | Scalars must have total encoding function
   scalarEncode :: a -> ScalarValue v
@@ -226,7 +231,7 @@ instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
       in HMap.fromList <$> attrlist
   dDecode Nothing = Just mempty
   dIsMissing = null
--- | DynamoDB cannot represent empty items; ['Maybe' a] will lose Nothings
+-- | DynamoDB cannot represent empty items; ['Maybe' a] will lose Nothings.
 instance DynamoEncodable a => DynamoEncodable [a] where
   dEncode lst = Just $ attributeValue & D.avL .~ mapMaybe dEncode lst
   dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
@@ -283,7 +288,7 @@ instance (Hashable (Tagged t a), IsText a) => IsText (Tagged t a) where
   toText (Tagged txt) = toText txt
   fromText tg = Tagged (fromText tg)
 
--- | Operation on range key for 'Database.queryKey.queryKey'.
+-- | Operation on range key for 'Database.DynamoDB.query'.
 data RangeOper a where
   RangeEquals :: a -> RangeOper a
   RangeLessThan :: a -> RangeOper a

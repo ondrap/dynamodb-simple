@@ -70,11 +70,13 @@ nameGenPath lst mkident = foldlM joinParts ("", HMap.empty) lst
         return (expr <> "." <> ident, attrs <> HMap.singleton ident nm)
     joinParts (expr, attrs) (IntraIndex idx) = return (expr <> "[" <> T.pack (show idx) <> "]", attrs)
 
--- | Filter condition. You cannot not touch primary key fields with the filter condition.
+-- | Filter condition. Use with scan, query, update and delete methods.
+--
+-- Filtering on primary key is not allowed.
 data FilterCondition t =
       And (FilterCondition t) (FilterCondition t)
     | Or (FilterCondition t) (FilterCondition t)
-    | Not (FilterCondition t)
+    | Not (FilterCondition t) -- ^ Negate condition
     | Comparison NameGen T.Text D.AttributeValue
     | AttrExists NameGen
     | AttrMissing NameGen
@@ -182,7 +184,7 @@ consistencyL = iso tocons fromcons
     fromcons Strongly = Just True
     fromcons Eventually = Just False
 
--- | Scan/query direction
+-- | Query direction
 data Direction = Forward | Backward
   deriving (Show, Eq)
 
