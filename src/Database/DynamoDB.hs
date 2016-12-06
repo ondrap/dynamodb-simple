@@ -104,8 +104,7 @@ putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
 putItem item = void $ send (dPutItem item)
 
 -- | Write item into the database only if it doesn't already exist.
-insertItem  :: forall a r m hash range rest.
-    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest]) => a -> m ()
+insertItem  :: forall a r m. (MonadAWS m, DynamoTable a r) => a -> m ()
 insertItem item = do
   let keyfields = primaryFields (Proxy :: Proxy a)
       -- Create condition attribute_not_exist(hash_key)
@@ -242,12 +241,11 @@ itemToKey a = (Proxy, dItemToKey a)
 -- variables.
 --
 -- @
--- import qualified GHC.Generics as GHC
 -- data Test = Test {
 --     category :: T.Text
 --   , messageid :: T.Text
 --   , subject :: T.Text
--- } deriving (Show, GHC.Generic)
+-- } deriving (Show)
 -- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 --
 -- main = do

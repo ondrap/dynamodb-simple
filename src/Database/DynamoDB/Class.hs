@@ -108,9 +108,6 @@ instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
 class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
-  default tableName :: (HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
-  tableName = gdConstrName
-
   -- | Serialize data, put it into the database
   dPutItem :: a -> D.PutItem
   dPutItem = defaultPutItem
@@ -169,8 +166,6 @@ type family PrimaryKey (a :: [[*]]) (r :: RangeType) :: * where
 -- | Class representing a Global Secondary Index
 class DynamoCollection a r 'IsIndex => DynamoIndex a parent (r :: RangeType) | a -> parent r where
   indexName :: Proxy a -> T.Text
-  default indexName :: (HasDatatypeInfo a, Code a ~ '[ xss ]) => Proxy a -> T.Text
-  indexName = gdConstrName
 
 class DynamoIndex a parent r => IndexCreate a parent (r :: RangeType) where
   createGlobalIndex ::
@@ -182,18 +177,6 @@ instance (DynamoIndex a p 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v h
 instance (DynamoIndex a p 'WithRange, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
       => IndexCreate a p 'WithRange where
   createGlobalIndex = defaultCreateGlobalIndexRange
-
-gdConstrName :: forall a xss. (Generic a, HasDatatypeInfo a, Code a ~ '[ xss ])
-  => Proxy a -> T.Text
-gdConstrName _ =
-  case datatypeInfo (Proxy :: Proxy a) of
-    ADT _ _ cs -> head $ hcollapse $ hliftA getName cs
-    Newtype _ _ c -> head $ hcollapse $ hliftA getName (c :* Nil)
-  where
-    getName :: ConstructorInfo xs -> K T.Text xs
-    getName (Record name _) = K (T.pack name)
-    getName (Constructor name) = K (T.pack name)
-    getName (Infix name _ _) = K (T.pack name)
 
 -- | Return first field of a datatype
 gdFirstField :: forall a hash rest. (Generic a, Code a ~ '[ hash ': rest ]) => a -> hash
@@ -212,8 +195,7 @@ gdTwoFields item = twoFields (from item)
     twoFields (SOP (Z (start :* range :* _))) = (unI start, unI range)
     twoFields (SOP (S _)) = error "This cannot happen." -- or the signature is not good enough?
 
-gsEncode :: forall a r t. (DynamoCollection a r t, All2 DynamoEncodable (Code a))
-  => a -> HashMap T.Text AttributeValue
+gsEncode :: forall a r t. DynamoCollection a r t => a -> HashMap T.Text AttributeValue
 gsEncode = gsEncodeG (allFieldNames (Proxy :: Proxy a))
 
 gsEncodeG :: forall a. (Generic a, All2 DynamoEncodable (Code a))
@@ -233,7 +215,7 @@ gsEncodeG names a = HMap.fromList $ mapMaybe (sequenceOf _2) $ zip names (gsEnco
     pdynamo = Proxy
 
 
-gsDecode :: forall a r t xs. (DynamoCollection a r t, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
+gsDecode :: forall a r t xs. (DynamoCollection a r t, Code a ~ '[ xs ])
   => HashMap T.Text AttributeValue -> Maybe a
 gsDecode = gsDecodeG (allFieldNames (Proxy :: Proxy a))
 
@@ -297,10 +279,9 @@ defaultQueryKey p key (Just range) =
     attrvals = HMap.fromList $ rangeData range ++ [(":key", dScalarEncode key)]
     (hashname:rangename:_) = allFieldNames p
 
-defaultCreateGlobalIndex :: forall a r parent r2 hash rest xs rest2 v.
-  (DynamoIndex a parent r, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
-    Code a ~ '[hash ': rest ], DynamoScalar v hash) =>
-  Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
+defaultCreateGlobalIndex :: forall a r parent r2 hash rest v.
+  (DynamoIndex a parent r, DynamoTable parent r2, Code a ~ '[hash ': rest ], DynamoScalar v hash)
+  => Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateGlobalIndex p thr =
     (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
   where
@@ -314,9 +295,8 @@ defaultCreateGlobalIndex p thr =
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (parentKey ++ [hashname])) $ allFieldNames (Proxy :: Proxy a)
 
-mkIndexHelper :: forall a parent r2 hash rest xs rest2 range v1 v2.
-  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
-    Code a ~ '[hash ': range ': rest ],
+mkIndexHelper :: forall a parent r2 hash rest range v1 v2.
+  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code a ~ '[hash ': range ': rest ],
     DynamoScalar v1 hash, DynamoScalar v2 range) =>
   Proxy a -> (NonEmpty D.KeySchemaElement, D.Projection, [D.AttributeDefinition])
 mkIndexHelper p = (keyschema, proj, attrdefs)

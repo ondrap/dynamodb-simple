@@ -37,6 +37,7 @@ import           Data.Monoid                     ((<>))
 import qualified Data.Text                       as T
 import           Data.HashMap.Strict             (HashMap)
 import           Generics.SOP
+import           Generics.SOP.TH                 (deriveGenericOnly)
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
 import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput, StreamViewType)
@@ -77,18 +78,16 @@ translateFieldName = translate
 --
 -- Example of what gets created:
 --
--- > data Test { first :: Text, second :: Text, third :: Int } deriving (GHC.Generic)
--- > data TestIndex { third :: Int, second :: T.Text} deriving (GHC.Generic)
+-- > data Test { first :: Text, second :: Text, third :: Int }
+-- > data TestIndex { third :: Int, second :: T.Text}
 -- >
 -- > mkTableDefs (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
 -- >
--- > instance Generic Test
--- > instance HasDatatypeInfo Test
+-- > deriveGenericOnly ''Test
 -- > instance DynamoCollection Test WithRange IsTable
 -- > instance DynamoTable Test WithRange
 -- >
--- > instance Generic TestIndex
--- > instance HasDatatypeInfo TestIndex
+-- > deriveGenericOnly ''TestIndex
 -- > instance DynamoCollection TestIndex NoRange IsIndex
 -- > instance DynamoIndex TestIndex Test NoRange IsIndex
 -- >
@@ -147,36 +146,31 @@ genBaseCollection :: Name -> RangeType -> Maybe String -> Maybe Name -> WriterT 
 genBaseCollection coll collrange mname mparent = do
     tblFieldNames <- getFieldNames coll
     let fieldNames = map fst tblFieldNames
-    let fieldList = pure (ListE (map (LitE . StringL) fieldNames))
+    let fieldList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL) fieldNames))
     primaryList' <- case (collrange, fieldNames) of
                       (NoRange, hashname:_) -> return [hashname]
                       (WithRange, h:r:_)-> return [h,r]
                       _ -> fail "Table must have at least 1/2 fields based on range key"
-    let primaryList = pure (ListE (map (LitE . StringL) primaryList'))
+    let primaryList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL) primaryList'))
     let tbltype = maybe (PromotedT 'IsTable) (const $ PromotedT 'IsIndex) mparent
+    tblname <- maybe (getTableTypeName coll) return mname
 
+    lift (deriveGenericOnly coll) >>= tell
     lift [d|
-      instance Generic $(pure (ConT coll))
-      instance HasDatatypeInfo $(pure (ConT coll))
       instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) $(pure tbltype) where
           allFieldNames _ = $(fieldList)
           primaryFields _ = $(primaryList)
       |] >>= tell
-    case (mname, mparent) of
-      (Nothing, Nothing) ->
-        lift [d|instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange))|] >>= tell
-      (Just name, Nothing) ->
+    case mparent of
+      Nothing ->
          lift [d|
              instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) where
-                tableName _ = $(pure $ LitE (StringL name))
+                tableName _ = $(pure $ AppE (VarE 'T.pack) (LitE (StringL tblname)))
               |] >>= tell
-      (Nothing, Just parent) ->
-        lift [d|instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange))|]
-              >>= tell
-      (Just name, Just parent) ->
+      Just parent ->
         lift [d|
             instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) where
-                indexName _ = $(pure $ LitE (StringL name))
+                indexName _ = $(pure $ AppE (VarE 'T.pack) (LitE (StringL tblname)))
               |] >>= tell
 
     -- Skip primary key, we cannot filter by it
@@ -188,6 +182,18 @@ genBaseCollection coll collrange mname mparent = do
   where
     mrange WithRange = 'WithRange
     mrange NoRange = 'NoRange
+
+-- | Reify and return a constructor name
+getTableTypeName :: Name -> WriterT [Dec] Q String
+getTableTypeName tbl = do
+    info <- lift $ reify tbl
+    case info of
+#if __GLASGOW_HASKELL__ >= 800
+        (TyConI (DataD _ (Name (OccName name) _) _ _ _ _)) -> return name
+#else
+        (TyConI (DataD _ (Name (OccName name) _) _ _ _)) -> return name
+#endif
+        _ -> fail ("Not a type declaration: " <> show tbl)
 
 -- | Reify name and return list of record fields with type
 getFieldNames :: Name -> WriterT [Dec] Q [(String, Type)]
@@ -238,10 +244,7 @@ say a = tell [a]
 deriveCollection :: Name -> Q [Dec]
 deriveCollection table =
   execWriterT $ do
-    lift [d|
-      instance Generic $(pure (ConT table))
-      instance HasDatatypeInfo $(pure (ConT table))
-      |] >>= tell
+    lift (deriveGenericOnly table) >>= tell
     -- Create column data
     tblFieldNames <- getFieldNames table
     buildColData tblFieldNames
@@ -264,7 +267,7 @@ deriveCollection table =
 deriveEncodable :: Name -> WriterT [Dec] Q ()
 deriveEncodable table = do
     tblFieldNames <- getFieldNames table
-    let fieldList = pure (ListE (map (LitE . StringL . fst) tblFieldNames))
+    let fieldList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL . fst) tblFieldNames))
     lift [d|
       instance DynamoEncodable $(pure (ConT table)) where
           dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
@@ -340,14 +343,14 @@ mkMigrationFunc name table globindexes locindexes = do
 -- data Book = Book {
 --      author :: T.Text
 --    , title :: T.Text
--- }
+-- } deriving (Show)
 -- $(deriveCollection ''Book)
 --
 -- data Test = Test {
 --     _tId :: Int
 --   , _tBase :: T.Text
 --   , _tBooks :: [Book]
--- } deriving (Show, GHC.Generic)
+-- } deriving (Show)
 -- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 -- @
 

@@ -13,7 +13,7 @@ data Test = Test {
   , user     :: T.Text
   , subject  :: T.Text
   , replies  :: Int
-} deriving (Show, GHC.Generic)
+} deriving (Show)
 -- Generate instances and colCategory, colUser etc. variables for queries/updates
 mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 

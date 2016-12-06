@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module BaseSpec where
 
@@ -20,9 +21,8 @@ import           Data.List                (sort)
 import           Data.Proxy
 import           Data.Semigroup           ((<>))
 import qualified Data.Text                as T
-import qualified GHC.Generics             as GHC
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB, provisionedThroughput)
+import           Network.AWS.DynamoDB     (dynamoDB)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
@@ -41,7 +41,7 @@ data Test = Test {
   , iDouble   :: Double
   , iInt      :: Int
   , iMText    :: Maybe T.Text
-} deriving (Show, GHC.Generic, Eq, Ord)
+} deriving (Show, Eq, Ord)
 mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
 
 withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))

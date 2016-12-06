@@ -8,11 +8,11 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module NestedSpec where
 
-import           Control.Exception.Safe   (SomeException, catchAny, finally,
-                                             try)
+import           Control.Exception.Safe   (catchAny, finally)
 import           Control.Monad.IO.Class   (liftIO)
 import           Control.Lens             (set, makeLenses, (^.), (^?), ix, (^..))
 import           Data.Function            ((&))
@@ -20,13 +20,11 @@ import           Data.Hashable
 import           Data.HashMap.Strict      (HashMap)
 import qualified Data.HashMap.Strict      as HMap
 import           Data.Proxy
-import           Data.Semigroup           ((<>))
 import qualified Data.Set                 as Set
 import           Data.Tagged
 import qualified Data.Text                as T
-import qualified GHC.Generics             as GHC
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB, provisionedThroughput)
+import           Network.AWS.DynamoDB     (dynamoDB)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
@@ -44,7 +42,7 @@ data Inner = Inner {
     _nFirst  :: T.Text
   , _nSecond :: Maybe Int
   , _nThird :: T.Text
-} deriving (Show, GHC.Generic, Eq)
+} deriving (Show, Eq)
 deriveCollection ''Inner
 makeLenses ''Inner
 
@@ -56,7 +54,7 @@ data Test = Test {
   , _iSet      :: Set.Set Name
   , _iList     :: [Inner]
   , _iMap      :: HashMap Name Inner
-} deriving (Show, GHC.Generic, Eq)
+} deriving (Show, Eq)
 mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
 makeLenses ''Test
 

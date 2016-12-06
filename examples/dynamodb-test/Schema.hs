@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE GADTs       #-}
+{-# LANGUAGE TypeFamilies       #-}
 
 -- {-# LANGUAGE DuplicateRecordFields #-}
 
