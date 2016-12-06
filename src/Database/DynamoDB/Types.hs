@@ -26,8 +26,6 @@ module Database.DynamoDB.Types (
     -- * Query datatype
   , RangeOper(..)
     -- * Utility functions
-  , gdDecode
-  , translateFieldName
   , dType
   , dScalarEncode
 ) where
@@ -53,7 +51,6 @@ import           Data.Tagged                 (Tagged (..), unTagged)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import qualified Data.Vector                 as V
-import           Generics.SOP
 import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
                                               attributeValue)
@@ -266,39 +263,6 @@ instance DynamoEncodable AE.Value where
   --
   dIsMissing AE.Null = True
   dIsMissing _ = False
-
--- | Decode hashmap to a record using generic-sop.
-gdDecode ::
-    forall a xs. (Generic a, HasDatatypeInfo a, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
-  => HMap.HashMap T.Text AttributeValue -> Maybe a
-gdDecode attrs =
-    to . SOP . Z <$> hsequence (hcliftA dproxy decodeAttr (gdFieldNamesNP (Proxy :: Proxy a)))
-  where
-    decodeAttr :: DynamoEncodable b => K T.Text b -> Maybe b
-    decodeAttr (K name) = dDecode (HMap.lookup name attrs)
-    dproxy = Proxy :: Proxy DynamoEncodable
-
--- | Return record field names in NP structure.
-gdFieldNamesNP :: forall a xs. (HasDatatypeInfo a, Code a ~ '[ xs ]) => Proxy a -> NP (K T.Text) xs
-gdFieldNamesNP _ =
-  case datatypeInfo (Proxy :: Proxy a) of
-    ADT _ _ cs ->
-        case hliftA getName cs of
-          start :* Nil -> start
-    _ -> error "Cannot even patternmatch because of type error"
-  where
-    getName :: ConstructorInfo xsd -> NP (K T.Text) xsd
-    getName (Record _ fields) = hliftA (\(FieldInfo name) -> K (translateFieldName name)) fields
-    getName _ = error "Only records are supported."
-
--- | Translates haskell field names to database attribute names.
-translateFieldName :: String -> T.Text
-translateFieldName = T.pack . translate
-  where
-    translate ('_':rest) = rest
-    translate name
-      | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
-      | otherwise = name
 
 -- | Class to limit +=. and -=. for updates.
 class IsNumber a

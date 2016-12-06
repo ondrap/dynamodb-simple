@@ -64,6 +64,15 @@ tableConfig (table, tbltype) globidx locidx =
       , localIndexes = map (, Nothing) locidx
     }
 
+-- | Translates haskell field names to database attribute names.
+translateFieldName :: String -> String
+translateFieldName = translate
+  where
+    translate ('_':rest) = rest
+    translate name
+      | '_' `elem` name = drop 1 $ dropWhile (/= '_') name
+      | otherwise = name
+
 -- | Create instances, datatypes for table, fields and instances.
 --
 -- Example of what gets created:
@@ -186,7 +195,7 @@ getFieldNames tbl = do
     info <- lift $ reify tbl
     case getRecords info of
       Left err -> fail $ "Table " <> show tbl <> ": " <> err
-      Right lst -> return $ map (over _1 (T.unpack . translateFieldName)) lst
+      Right lst -> return $ map (over _1 translateFieldName) lst
   where
     getRecords :: Info -> Either String [(String, Type)]
 #if __GLASGOW_HASKELL__ >= 800
@@ -259,7 +268,7 @@ deriveEncodable table = do
     lift [d|
       instance DynamoEncodable $(pure (ConT table)) where
           dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
-          dDecode (Just attr) = gdDecode (attr ^. avM)
+          dDecode (Just attr) = gsDecodeG $(fieldList) (attr ^. avM)
           dDecode Nothing = Nothing
       |] >>= tell
     let constrs = mkConstrNames tblFieldNames

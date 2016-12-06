@@ -100,7 +100,7 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
         tbls <- retryReadBatch cmd
         mapM decoder (tbls ^.. ix tblname . traverse)
     decoder item =
-        case gdDecode item of
+        case gsDecode item of
           Just res -> return res
           Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 

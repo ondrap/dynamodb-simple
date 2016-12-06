@@ -28,10 +28,10 @@ module Database.DynamoDB.Class (
   , dScan
   , RangeType(..)
   , TableType(..)
-  , gdDecode
+  , gsDecode
+  , gsDecodeG
   , gsEncode
   , gsEncodeG
-  , translateFieldName
   , PrimaryKey
   , TableQuery
   , TableScan
@@ -72,7 +72,7 @@ data TableType = IsTable | IsIndex
 
 -- | Basic instance for dynamo collection (table or index)
 -- This instances fixes the tableName and the sort key
-class (Generic a, HasDatatypeInfo a , All2 DynamoEncodable (Code a))
+class (Generic a, All2 DynamoEncodable (Code a))
   => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r t where
   allFieldNames :: Proxy a -> [T.Text]
   primaryFields :: Proxy a -> [T.Text]
@@ -231,6 +231,21 @@ gsEncodeG names a = HMap.fromList $ mapMaybe (sequenceOf _2) $ zip names (gsEnco
 
     pdynamo :: Proxy DynamoEncodable
     pdynamo = Proxy
+
+
+gsDecode :: forall a r t xs. (DynamoCollection a r t, All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
+  => HashMap T.Text AttributeValue -> Maybe a
+gsDecode = gsDecodeG (allFieldNames (Proxy :: Proxy a))
+
+-- | Decode hashmap to a record using generic-sop.
+gsDecodeG ::
+    forall a xs. (Generic a,  All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
+  => [T.Text] -> HMap.HashMap T.Text AttributeValue -> Maybe a
+gsDecodeG names attrs =
+    let Just vals = fromList $ map (`HMap.lookup` attrs) names
+    in to . SOP . Z <$> hsequence (hcliftA dproxy (dDecode . unK) vals)
+  where
+    dproxy = Proxy :: Proxy DynamoEncodable
 
 
 defaultPutItem :: forall a r. DynamoTable a r => a -> D.PutItem

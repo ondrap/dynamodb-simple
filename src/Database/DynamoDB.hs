@@ -127,7 +127,7 @@ getItem consistency key = do
   let result = rs ^. D.girsItem
   if | null result -> return Nothing
      | otherwise ->
-          case gdDecode result of
+          case gsDecode result of
               Just res -> return (Just res)
               Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
 
@@ -194,7 +194,7 @@ updateItemByKey :: forall a m r hash range rest.
 updateItemByKey (p, pkey) actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = do
         rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
-        case gdDecode (rs ^. D.uirsAttributes) of
+        case gsDecode (rs ^. D.uirsAttributes) of
             Just res -> return res
             Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
   | otherwise = do
