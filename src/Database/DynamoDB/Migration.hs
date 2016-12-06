@@ -150,6 +150,26 @@ compareLocalIndexes tabledef descr = do
       throwM (DynamoException ("Inconsistent local index settings (projection/types): "
                                 <> T.intercalate "," inconsistent))
 
+-- | Change streaming settings on a table
+changeStream :: (AWSConstraint r m, MonadAWS m)
+    => T.Text -> Maybe D.StreamSpecification -> Maybe D.StreamSpecification -> m ()
+changeStream _ Nothing Nothing = return ()
+changeStream tblname (Just _) Nothing = do
+    logmsg Info "Disabling streaming."
+    waitUntilTableActive tblname False
+    let strspec = D.streamSpecification & D.ssStreamEnabled .~ Just False
+        cmd = D.updateTable tblname & D.utStreamSpecification .~ Just strspec
+    void (send cmd)
+changeStream tblname Nothing (Just new) = do
+    waitUntilTableActive tblname False
+    logmsg Info "Enabling streaming."
+    let cmd = D.updateTable tblname & D.utStreamSpecification .~ Just new
+    void (send cmd)
+changeStream tblname (Just old) (Just new) = do
+    changeStream tblname (Just old) Nothing
+    changeStream tblname Nothing (Just new)
+
+
 -- | Main table migration code
 tryMigration :: (AWSConstraint r m, MonadAWS m) => D.CreateTable -> D.TableDescription -> m ()
 tryMigration tabledef descr = do
@@ -181,6 +201,9 @@ tryMigration tabledef descr = do
         waitUntilTableActive tblname True
         logmsg Info $ "Create new indices: " <> T.intercalate "," (tocreate ^.. traverse . D.gsiIndexName)
         createIndices tabledef tocreate
+    -- Check streaming settings
+    when (tabledef ^. D.ctStreamSpecification /= descr ^. D.tdStreamSpecification) $
+        changeStream tblname (descr ^. D.tdStreamSpecification) (tabledef ^. D.ctStreamSpecification)
     -- Done
     logmsg Info $ "Table " <> tblname <> " schema check done."
   where
@@ -231,8 +254,9 @@ runMigration :: (TableCreate table r, MonadAWS m, Code table ~ '[ hash ': range 
   -> [D.ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])]
   -> [(D.LocalSecondaryIndex, [D.AttributeDefinition])]
   -> HMap.HashMap T.Text D.ProvisionedThroughput
+  -> Maybe D.StreamViewType
   -> m ()
-runMigration ptbl globindices' locindices provisionMap =
+runMigration ptbl globindices' locindices provisionMap stream =
   liftAWS $ do
       let tbl = createTable ptbl (getProv (tableName ptbl))
           globindices = map (first adjustProv . ($ defaultprov)) globindices'
@@ -242,8 +266,14 @@ runMigration ptbl globindices' locindices provisionMap =
       let final = tbl & bool (D.ctGlobalSecondaryIndexes .~ map fst globindices) id (null globindices)
                       & bool (D.ctLocalSecondaryIndexes .~ map fst locindices) id (null locindices)
                       & D.ctAttributeDefinitions %~ (nub . (<> idxattrs))
+                      & addStream stream
       createOrMigrate final
   where
     getProv name = fromMaybe defaultprov (HMap.lookup name provisionMap)
     defaultprov = D.provisionedThroughput 5 5
     adjustProv idx = idx & (D.gsiProvisionedThroughput .~ getProv (idx ^. D.gsiIndexName))
+    addStream Nothing = id
+    addStream (Just stype) =
+      let strspec = D.streamSpecification & D.ssStreamEnabled .~ Just True
+                                          & D.ssStreamViewType .~ Just stype
+      in D.ctStreamSpecification .~ Just strspec

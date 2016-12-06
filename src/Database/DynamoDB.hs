@@ -250,7 +250,7 @@ itemToKey a = (Proxy, dItemToKey a)
 --   , messageid :: T.Text
 --   , subject :: T.Text
 -- } deriving (Show, GHC.Generic)
--- $(mkTableDefs "migrate" (''Test, WithRange) [])
+-- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 --
 -- main = do
 --    lgr <- newLogger Info stdout
@@ -260,7 +260,7 @@ itemToKey a = (Proxy, dItemToKey a)
 --    let newenv = env & configure dynamo
 --                     & set envLogger lgr
 --    runResourceT $ runAWS newenv $ do
---        migrate (provisionedThroughput 5 5) [] -- Create tables, indexes
+--        migrate mempty Nothing -- Create tables, indexes
 --        putItem (Test "news" "1-2-3-4" "New subject")
 --        item <- getItem Eventually ("news", "1-2-3-4")
 --        liftIO $ print (item :: Maybe Test)

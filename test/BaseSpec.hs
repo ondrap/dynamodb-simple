@@ -57,7 +57,7 @@ withDb msg code = it msg runcode
                        -- & set envLogger lgr
       runResourceT $ runAWS newenv $ do
           deleteTable (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
-          migrateTest mempty
+          migrateTest mempty Nothing
           code `finally` deleteTable (Proxy :: Proxy Test)
 
 spec :: Spec

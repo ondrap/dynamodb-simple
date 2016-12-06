@@ -46,7 +46,7 @@ main = do
       -- Delete table
       deleteTable (Proxy :: Proxy Article) `catchAny` (\_ -> return ())
       -- Create table; provisionedThroughput for indexes is some low default
-      migrateTables mempty
+      migrateTables mempty Nothing
 
       withLog "Loading data" $
         genArticles >>= putItemBatch

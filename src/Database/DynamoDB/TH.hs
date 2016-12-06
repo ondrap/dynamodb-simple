@@ -39,7 +39,7 @@ import           Data.HashMap.Strict             (HashMap)
 import           Generics.SOP
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
-import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput)
+import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput, StreamViewType)
 import           Network.AWS                     (MonadAWS)
 
 import           Database.DynamoDB.Class
@@ -272,7 +272,9 @@ mkMigrationFunc name table globindexes locindexes = do
     m <- newName "m"
     let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)]
                                   (AppT (AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text))
-                                  (ConT ''ProvisionedThroughput))) (AppT (VarT m) (TupleT 0))))
+                                  (ConT ''ProvisionedThroughput)))
+                                  (AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType)))
+                                  (AppT (VarT m) (TupleT 0)))))
     return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
               (SigE (ConE 'Proxy)
               (AppT (ConT ''Proxy)
@@ -287,6 +289,9 @@ mkMigrationFunc name table globindexes locindexes = do
 -- you will end up with lots of instances, data types for columns ('P_TId', 'P_TBase', 'P_TDescr')
 -- and smart constructors for column ('colTId', 'colTBase', 'colTDescr', etc.) and one function (migrate)
 -- that creates table and updates the indexes.
+--
+-- The migration function has signature:
+--   MonadAWS m => HashMap T.Text ProvisionedThroughput -> Maybe StreamViewType -> m0 ()
 --
 -- * Table is named after a constructor of the datatype (Test)
 -- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.

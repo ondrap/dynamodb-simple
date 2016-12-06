@@ -26,7 +26,7 @@ test = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   let newenv = env & configure dynamo & set envLogger lgr
   runResourceT $ runAWS newenv $ do
-      migrate  mempty -- Create tables, indices etc.
+      migrate mempty Nothing -- Create tables, indices etc.
       --
       putItem (Test "news" "john" "test" 20)
       --
@@ -55,6 +55,7 @@ test = do
   queries when searching for these empty values.
 - Compatible with GHC8 `DuplicateRecordFields`
 - Customizable table and index names.
+- Streaming settings.
 
 ### What is planned
 
@@ -94,4 +95,4 @@ Empty string and empty set are represented by omitting the value.
 
 There is a bug in `amazonka-dynamodb` that causes the `Conduit`-based queries/scans not behave correctly
 under certain circumstances. It's also why the travis CI build of dynamodb-simple is failing
-right now. 
+right now.
