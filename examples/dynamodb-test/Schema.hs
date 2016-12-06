@@ -1,8 +1,7 @@
 {-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE TypeFamilies       #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 -- {-# LANGUAGE DuplicateRecordFields #-}
 

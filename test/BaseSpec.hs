@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
@@ -120,6 +119,25 @@ spec = do
       putItemBatch newItems
       (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt >. 50)) 5
       liftIO $ items `shouldBe` drop 50 newItems
+    withDb "scan works correctly with `valIn`" $ do
+      let template i = Test "hashkey" i "text" False 3.14 i Nothing
+          newItems = map template [1..55]
+      putItemBatch newItems
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt `valIn` [20..30])) 50
+      liftIO $ map iInt items `shouldBe` [20..30]
+    withDb "scan works correctly with BETWEEN" $ do
+      let template i = Test "hashkey" i "text" False 3.14 i Nothing
+          newItems = map template [1..55]
+      putItemBatch newItems
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt `between` (20, 30))) 50
+      liftIO $ map iInt items `shouldBe` [20..30]
+    withDb "scan works correctly with SIZE" $ do
+      let testitem1 = Test "1" 2 "very very very very very long" False 3.14 2 Nothing
+          testitem2 = Test "1" 3 "short" False 3.14 2 Nothing
+      putItem testitem1
+      putItem testitem2
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (size colIText >. 10)) 50
+      liftIO $ items `shouldBe` [testitem1]
     withDb "querySimple works correctly with RangeOper" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]

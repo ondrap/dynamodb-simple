@@ -33,8 +33,8 @@ import           Database.DynamoDB.Types
 
 -- | Numeric/string range comparison
 between :: (Ord typ, InCollection col tbl 'FullPath, DynamoScalar v typ)
-  => Column typ ctyp col -> typ -> typ -> FilterCondition tbl
-between col a b = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
+  => Column typ ctyp col -> (typ, typ) -> FilterCondition tbl
+between col (a, b) = Between (nameGen col) (dScalarEncode a) (dScalarEncode b)
 
 -- | a IN (b, c, d); the list may contain up to 100 values
 valIn :: (InCollection col tbl 'FullPath, DynamoScalar v typ)
