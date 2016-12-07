@@ -95,25 +95,25 @@ spec = do
         putItem testitem1
         putItem testitem2
         --
-        items1 <- scanCond (colIInner <.> colNFirst ==. "test") 10
+        items1 <- scanCond (iInner' <.> nFirst' ==. "test") 10
         liftIO $ items1 `shouldBe` [testitem1]
         --
-        items2 <- scanCond (colIInner <.> colNFirst ==. "") 10
+        items2 <- scanCond (iInner' <.> nFirst' ==. "") 10
         liftIO $ items2 `shouldBe` [testitem2]
         --
-        items3 <- scanCond (colIMInner <.> colNThird ==. "test") 10
+        items3 <- scanCond (iMInner' <.> nThird' ==. "test") 10
         liftIO $ items3 `shouldBe` [testitem1]
         --
-        items4 <- scanCond (colIMInner ==. Nothing) 10
+        items4 <- scanCond (iMInner' ==. Nothing) 10
         liftIO $ items4 `shouldBe` [testitem2]
         --
-        items5 <- scanCond (colISet `setContains` Tagged "test") 10
+        items5 <- scanCond (iSet' `setContains` Tagged "test") 10
         liftIO $ items5 `shouldBe` [testitem1]
         --
-        items6 <- scanCond (colIList <!> 0 <.> colNFirst ==. "test") 10
+        items6 <- scanCond (iList' <!> 0 <.> nFirst' ==. "test") 10
         liftIO $ items6 `shouldBe` [testitem1]
         --
-        items7 <- scanCond (colIMap <!:> Tagged "test" <.> colNThird ==. "test") 10
+        items7 <- scanCond (iMap' <!:> Tagged "test" <.> nThird' ==. "test") 10
         liftIO $ items7 `shouldBe` [testitem1]
 
     withDb "Nested updates" $ do
@@ -124,23 +124,23 @@ spec = do
         putItem testitem1
         putItem testitem2
         --
-        newitem1 <- updateItemByKey (itemToKey testitem1) (colIInner <.> colNFirst =. "updated")
+        newitem1 <- updateItemByKey (itemToKey testitem1) (iInner' <.> nFirst' =. "updated")
         liftIO $ newitem1 ^. iInner . nFirst `shouldBe` "updated"
         --
-        newitem2 <- updateItemByKey (itemToKey testitem1) (add colISet (Set.singleton (Tagged "test2")))
+        newitem2 <- updateItemByKey (itemToKey testitem1) (add iSet' (Set.singleton (Tagged "test2")))
         liftIO $ newitem2 ^. iSet `shouldBe` Set.fromList [Tagged "test", Tagged "test2"]
         --
-        newitem3 <- updateItemByKey (itemToKey testitem1) (prepend colIList [inner2, inner1])
+        newitem3 <- updateItemByKey (itemToKey testitem1) (prepend iList' [inner2, inner1])
         liftIO $ newitem3 ^. iList `shouldBe` [inner2, inner1, inner1]
         --
-        newitem4 <- updateItemByKey (itemToKey testitem1) (delListItem colIList 1)
+        newitem4 <- updateItemByKey (itemToKey testitem1) (delListItem iList' 1)
         liftIO $ newitem4 ^. iList `shouldBe` [inner2, inner1]
         --
-        newitem5 <- updateItemByKey (itemToKey testitem2) (colIMap <!:> Tagged "test" =. inner1)
+        newitem5 <- updateItemByKey (itemToKey testitem2) (iMap' <!:> Tagged "test" =. inner1)
         liftIO $ newitem5 ^.. iMap . traverse `shouldBe` [inner1]
         liftIO $ newitem5 ^? iMap . ix (Tagged "test")  `shouldBe` Just inner1
         --
-        newitem6 <- updateItemByKey (itemToKey testitem2) (delHashKey colIMap (Tagged "test"))
+        newitem6 <- updateItemByKey (itemToKey testitem2) (delHashKey iMap' (Tagged "test"))
         liftIO $ newitem6 ^. iMap `shouldBe` HMap.empty
 
 

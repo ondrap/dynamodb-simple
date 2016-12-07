@@ -89,7 +89,7 @@ spec = do
         let template i = Test (T.pack $ show i) i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
-        let squery = scanOpts & sFilterCondition .~ Just (colIInt >. 50)
+        let squery = scanOpts & sFilterCondition .~ Just (iInt' >. 50)
                               & sLimit .~ Just 1
         res <- runConduit $ scanSource squery =$= CL.consume
         liftIO $ res `shouldBe` drop 50 newItems
@@ -97,7 +97,7 @@ spec = do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
-        let squery = queryOpts "hashkey" & qFilterCondition .~ Just (colIInt >. 50)
+        let squery = queryOpts "hashkey" & qFilterCondition .~ Just (iInt' >. 50)
                                          & qLimit .~ Just 1
         res <- runConduit $ querySource squery =$= CL.consume
         liftIO $ res `shouldBe` drop 50 newItems
@@ -105,38 +105,38 @@ spec = do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
-        items <- queryCond "hashkey" Nothing (colIInt >. 50) Forward 5
+        items <- queryCond "hashkey" Nothing (iInt' >. 50) Forward 5
         liftIO $ items `shouldBe` drop 50 newItems
     withDb "scanCond works correctly" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
-        items <- scanCond (colIInt >. 50) 5
+        items <- scanCond (iInt' >. 50) 5
         liftIO $ items `shouldBe` drop 50 newItems
     withDb "scan works correctly with qlimit" $ do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
       putItemBatch newItems
-      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt >. 50)) 5
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' >. 50)) 5
       liftIO $ items `shouldBe` drop 50 newItems
     withDb "scan works correctly with `valIn`" $ do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
       putItemBatch newItems
-      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt `valIn` [20..30])) 50
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' `valIn` [20..30])) 50
       liftIO $ map iInt items `shouldBe` [20..30]
     withDb "scan works correctly with BETWEEN" $ do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
       putItemBatch newItems
-      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (colIInt `between` (20, 30))) 50
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' `between` (20, 30))) 50
       liftIO $ map iInt items `shouldBe` [20..30]
     withDb "scan works correctly with SIZE" $ do
       let testitem1 = Test "1" 2 "very very very very very long" False 3.14 2 Nothing
           testitem2 = Test "1" 3 "short" False 3.14 2 Nothing
       putItem testitem1
       putItem testitem2
-      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (size colIText >. 10)) 50
+      (items, _) <- scan (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (size iText' >. 10)) 50
       liftIO $ items `shouldBe` [testitem1]
     withDb "querySimple works correctly with RangeOper" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
@@ -148,13 +148,13 @@ spec = do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
         putItemBatch newItems
-        (items :: [Test]) <- queryCond "hashkey" Nothing (colIInt >. 50) Backward (-1)
+        (items :: [Test]) <- queryCond "hashkey" Nothing (iInt' >. 50) Backward (-1)
         liftIO $ items `shouldBe` []
     withDb "updateItemByKey works" $ do
         let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
         putItem testitem1
         new1 <- updateItemByKey (itemToKey testitem1)
-                                ((colIInt +=. 5) <> (colIText =. "updated") <> (colIMText =. Nothing))
+                                ((iInt' +=. 5) <> (iText' =. "updated") <> (iMText' =. Nothing))
         Just new2 <- getItem Strongly (snd (itemToKey testitem1))
         liftIO $ do
             new1 `shouldBe` new2
@@ -165,8 +165,8 @@ spec = do
     withDb "update fails on non-existing item" $ do
         let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
         putItem testitem1
-        updateItemByKey_ (Proxy :: Proxy Test, ("1", 2)) (colIBool =. True)
-        (res :: Either SomeException ()) <- try $ updateItemByKey_ (Proxy :: Proxy Test, ("2", 3)) (colIBool =. True)
+        updateItemByKey_ (Proxy :: Proxy Test, ("1", 2)) (iBool' =. True)
+        (res :: Either SomeException ()) <- try $ updateItemByKey_ (Proxy :: Proxy Test, ("2", 3)) (iBool' =. True)
         liftIO $ res `shouldSatisfy` isLeft
 
     withDb "scan continuation works" $ do
@@ -174,9 +174,9 @@ spec = do
             newItems = map template [1..55]
         putItemBatch newItems
 
-        (it1 :: [Test], next) <- scan (scanOpts & sFilterCondition .~ Just (colIInt >. 20)
+        (it1 :: [Test], next) <- scan (scanOpts & sFilterCondition .~ Just (iInt' >. 20)
                                                 & sLimit .~ Just 2) 5
-        (it2, _) <- scan (scanOpts & sFilterCondition .~ Just (colIInt >. 20)
+        (it2, _) <- scan (scanOpts & sFilterCondition .~ Just (iInt' >. 20)
                                                 & sLimit .~ Just 1
                                                 & sStartKey .~ next) 5
         liftIO $ map iInt (it1 ++ it2) `shouldBe` [21..30]
@@ -186,8 +186,8 @@ spec = do
         let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
         putItem testitem1
         putItem testitem2
-        (items1 :: [Test]) <- queryCond "1" Nothing (colIText ==. "") Forward 10
-        (items2 :: [Test]) <- queryCond "1" Nothing (colIMText ==. Nothing) Forward 10
+        (items1 :: [Test]) <- queryCond "1" Nothing (iText' ==. "") Forward 10
+        (items2 :: [Test]) <- queryCond "1" Nothing (iMText' ==. Nothing) Forward 10
         liftIO $ items1 `shouldBe` [testitem1]
         liftIO $ items2 `shouldBe` [testitem1]
 

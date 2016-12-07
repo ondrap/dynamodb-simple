@@ -108,8 +108,8 @@ defaultTranslate = translate
 -- >     columnName _ = "first"
 -- > instance InCollection P_First Test 'NestedPath -- For every attribute
 -- > instance InCollection P_Second TestIndex 'FullPath -- For every non-primary attribute
--- > colFirst :: Column Text TypColumn P_First
--- > colFirst = Column
+-- > first' :: Column Text TypColumn P_First
+-- > first' = Column
 mkTableDefs ::
     String -- ^ Name of the migration function
   -> TableConfig
@@ -218,12 +218,12 @@ toConstrName = ("P_" <>) . over (ix 0) toUpper
 mkConstrNames :: [(String,a)] -> [Name]
 mkConstrNames = map (mkName . toConstrName . fst)
 
--- | Build P_Column0 data, add it to instances and make colColumn variable
+-- | Build P_Column data, add it to instances and make column' variable
 buildColData :: [(String, Type)] -> WriterT [Dec] Q ()
 buildColData fieldlist = do
     let constrNames = mkConstrNames fieldlist
     forM_ (zip fieldlist constrNames) $ \((fieldname, ltype), constr) -> do
-        let pat = mkName (toPatName fieldname)
+        let pat = mkName (fieldname <> "'")
 #if __GLASGOW_HASKELL__ >= 800
         say $ DataD [] constr [] Nothing [] []
 #else
@@ -235,8 +235,6 @@ buildColData fieldlist = do
           |] >>= tell
         say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT 'TypColumn)) (ConT constr))
         say $ ValD (VarP pat) (NormalB (VarE 'mkColumn)) []
-  where
-    toPatName = ("col" <> ) . over (ix 0) toUpper
 
 say :: Monad m => t -> WriterT [t] m ()
 say a = tell [a]
