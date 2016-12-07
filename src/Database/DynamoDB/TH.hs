@@ -32,6 +32,7 @@ import           Control.Lens                    (ix, over, (.~), (^.), _1, view
 import           Control.Monad                   (forM_, when)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
+import           Data.Bool                       (bool)
 import           Data.Char                       (toUpper)
 import           Data.Function                   ((&))
 import           Data.Monoid                     ((<>))
@@ -175,12 +176,15 @@ genBaseCollection coll collrange tblname mparent translate = do
           primaryFields _ = $(primaryList)
       |] >>= tell
     case mparent of
-      Nothing ->
+      Nothing -> do
+         mkCollectionProxy True
+         -- $(varP proxyName) = Proxy
          lift [d|
-             instance DynamoTable $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) where
-                tableName _ = $(pure $ AppE (VarE 'T.pack) (LitE (StringL tblname)))
+             instance DynamoTable $(conT coll) $(conT $ mrange collrange) where
+                tableName _ = $(appE (varE 'T.pack) (litE (StringL tblname)))
               |] >>= tell
-      Just parent ->
+      Just parent -> do
+        mkCollectionProxy False
         lift [d|
             instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) where
                 indexName _ = $(pure $ AppE (VarE 'T.pack) (LitE (StringL tblname)))
@@ -195,6 +199,11 @@ genBaseCollection coll collrange tblname mparent translate = do
   where
     mrange WithRange = 'WithRange
     mrange NoRange = 'NoRange
+    mkCollectionProxy istable = do
+        let proxyName = mkName (bool "i" "t" istable <> nameBase coll)
+        say $ SigD proxyName (AppT (ConT ''Proxy) (ConT coll))
+        say $ ValD (VarP proxyName) (NormalB (ConE 'Proxy)) []
+
 
 -- | Reify name and return list of record fields with type
 getFieldNames :: Name -> (String -> String) -> WriterT [Dec] Q [(String, Type)]

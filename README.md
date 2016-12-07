@@ -14,7 +14,7 @@ data Test = Test {
   , subject  :: T.Text
   , replies  :: Int
 } deriving (Show)
--- Generate instances and colCategory, colUser etc. variables for queries/updates
+-- Generate instances and category', user' etc. variables for queries/updates
 mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
 
 test :: IO ()
@@ -30,10 +30,10 @@ test = do
       --
       putItem (Test "news" "john" "test" 20)
       --
-      (item :: Maybe Test) <- getItem Eventually ("news", "john")
+      item <- getItem tTest Eventually ("news", "john")
       liftIO $ print item
       --
-      (items :: [Test]) <- scanCond (colReplies >. 15) 10
+      items <- scanCond tTest (replies' >. 15) 10
       liftIO $ print items
 ````
 ### Features

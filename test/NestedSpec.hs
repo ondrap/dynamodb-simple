@@ -83,8 +83,8 @@ spec = do
             testitem2 = Test "hash" 2 inner1 Nothing Set.empty [] HMap.empty
         putItem testitem1
         putItem testitem2
-        Just ritem1 <- getItem Strongly ("hash", 1)
-        Just ritem2 <- getItem Strongly ("hash", 2)
+        Just ritem1 <- getItem tTest Strongly ("hash", 1)
+        Just ritem2 <- getItem tTest Strongly ("hash", 2)
         liftIO $ testitem1 `shouldBe` ritem1
         liftIO $ testitem2 `shouldBe` ritem2
     withDb "Scan conditions" $ do
@@ -95,25 +95,25 @@ spec = do
         putItem testitem1
         putItem testitem2
         --
-        items1 <- scanCond (iInner' <.> nFirst' ==. "test") 10
+        items1 <- scanCond tTest (iInner' <.> nFirst' ==. "test") 10
         liftIO $ items1 `shouldBe` [testitem1]
         --
-        items2 <- scanCond (iInner' <.> nFirst' ==. "") 10
+        items2 <- scanCond tTest (iInner' <.> nFirst' ==. "") 10
         liftIO $ items2 `shouldBe` [testitem2]
         --
-        items3 <- scanCond (iMInner' <.> nThird' ==. "test") 10
+        items3 <- scanCond tTest (iMInner' <.> nThird' ==. "test") 10
         liftIO $ items3 `shouldBe` [testitem1]
         --
-        items4 <- scanCond (iMInner' ==. Nothing) 10
+        items4 <- scanCond tTest (iMInner' ==. Nothing) 10
         liftIO $ items4 `shouldBe` [testitem2]
         --
-        items5 <- scanCond (iSet' `setContains` Tagged "test") 10
+        items5 <- scanCond tTest (iSet' `setContains` Tagged "test") 10
         liftIO $ items5 `shouldBe` [testitem1]
         --
-        items6 <- scanCond (iList' <!> 0 <.> nFirst' ==. "test") 10
+        items6 <- scanCond tTest (iList' <!> 0 <.> nFirst' ==. "test") 10
         liftIO $ items6 `shouldBe` [testitem1]
         --
-        items7 <- scanCond (iMap' <!:> Tagged "test" <.> nThird' ==. "test") 10
+        items7 <- scanCond tTest (iMap' <!:> Tagged "test" <.> nThird' ==. "test") 10
         liftIO $ items7 `shouldBe` [testitem1]
 
     withDb "Nested updates" $ do

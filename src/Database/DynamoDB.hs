@@ -119,9 +119,9 @@ insertItem item = do
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
-    => Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
-getItem consistency key = do
-  let cmd = dGetItem (Proxy :: Proxy a) key & D.giConsistentRead . consistencyL .~ consistency
+    => Proxy a -> Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
+getItem p consistency key = do
+  let cmd = dGetItem p key & D.giConsistentRead . consistencyL .~ consistency
   rs <- send cmd
   let result = rs ^. D.girsItem
   if | null result -> return Nothing
@@ -156,7 +156,7 @@ dUpdateItem :: forall a r hash range xss.
 dUpdateItem p pkey actions mcond =
     genAction <$> dumpActions actions
   where
-    keyfields = primaryFields (Proxy :: Proxy a)
+    keyfields = primaryFields p
         -- Create condition attribute_exists(hash_key)
     pkeyExists = (AttrExists . nameGenPath . pure . IntraName) (head keyfields)
 
@@ -197,7 +197,7 @@ updateItemByKey (p, pkey) actions
             Just res -> return res
             Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
   | otherwise = do
-      rs <- getItem Strongly pkey
+      rs <- getItem p Strongly pkey
       case rs of
           Just res -> return res
           Nothing -> throwM (DynamoException "Cannot decode item.")
@@ -268,10 +268,11 @@ itemToKey a = (Proxy, dItemToKey a)
 --        -- Save data to database
 --        putItem (Test "news" "1-2-3-4" "New subject")
 --        -- Fetch data given primary key
---        (item :: Maybe Test) <- getItem Eventually ("news", "1-2-3-4")
---        liftIO $ print item
+--        item <- getItem Eventually ("news", "1-2-3-4")
+--        liftIO $ print item -- (item :: Maybe Test)
 --        -- Scan data using filter condition, return 10 results
---        (items :: [Test]) <- scanCond (colSubject ==. "New subejct") 10
+--        items <- scanCond tTest (subject' ==. "New subejct") 10
+--        print items -- (items :: [Test])
 -- @
 --
 -- See examples/ and test/ directories for more detail examples.

@@ -52,27 +52,27 @@ main = do
         genArticles >>= putItemBatch
 
       withLog "Querying published news articles" $ do
-        (items :: [ArticleIndex]) <- querySimple (Tagged "News") Nothing Backward 5
+        items <- querySimple iArticleIndex (Tagged "News") Nothing Backward 5
         forM_ items (liftIO . print)
 
       withLog "Querying published news articles with red tag" $ do
-        (items :: [ArticleIndex]) <- queryCond (Tagged "News") Nothing (artTags' `setContains` Red) Backward 5
+        items <- queryCond iArticleIndex (Tagged "News") Nothing (artTags' `setContains` Red) Backward 5
         forM_ items (liftIO . print)
 
       withLog "Querying published news articles from Bill Clinton" $ do
         let condition = (artAuthor' <.> autFirstName' ==. "Bill" &&. artAuthor' <.> autLastName' ==. "Clinton" )
-        (items :: [ArticleIndex]) <- queryCond (Tagged "News") Nothing condition Backward 10
+        items <- queryCond iArticleIndex (Tagged "News") Nothing condition Backward 10
         forM_ items (liftIO . print)
 
       -- Scan with condition
       withLog "Simple scan unpublished articles" $ do
-        (items :: [Article]) <- scanCond (artPublished' ==. Nothing) 10
+        items <- scanCond tArticle (artPublished' ==. Nothing) 10
         forM_ items (liftIO . print)
 
       -- Update
       withLog "Change field in a nested structure with Maybe" $ do
         -- get some article
-        ([item] :: [Article]) <- scanCond (artCoauthor' /=. Nothing) 1
+        [item] <- scanCond tArticle (artCoauthor' /=. Nothing) 1
         logmsg $ "Before update: " <> T.pack (show item)
         newitem <- updateItemByKey (itemToKey item) (artCoauthor' <.> autGender' =. Female)
         logmsg $ "After update: " <> T.pack (show newitem)
