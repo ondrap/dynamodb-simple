@@ -13,7 +13,7 @@
 -- Example as used in nested structure for scan:
 --
 -- > updateItemByKey_ (Proxy :: Proxy Test, ("hashkey", "sortkey"))
--- >                  ((colIInt +=. 5) <> (colIText =. "updated") <> (colIMText =. Nothing))
+-- >                  ((iInt' +=. 5) <> (iText' =. "updated") <> (iMText' =. Nothing))
 --
 -- The unique "Action" can be added together using the '<>' operator. You are not supposed
 -- to operate on the same attribute simultaneously using multiple actions.

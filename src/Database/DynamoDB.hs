@@ -20,6 +20,12 @@ module Database.DynamoDB (
     -- * Introduction
     -- $intro
 
+    -- * Proxies
+    -- $proxy
+
+    -- * Lens support
+    -- $lens
+
     -- * Data types
     DynamoException(..)
   , Consistency(..)
@@ -269,10 +275,44 @@ itemToKey a = (Proxy, dItemToKey a)
 --        putItem (Test "news" "1-2-3-4" "New subject")
 --        -- Fetch data given primary key
 --        item <- getItem Eventually ("news", "1-2-3-4")
---        liftIO $ print item -- (item :: Maybe Test)
+--        liftIO $ print item       -- (item :: Maybe Test)
 --        -- Scan data using filter condition, return 10 results
 --        items <- scanCond tTest (subject' ==. "New subejct") 10
---        print items -- (items :: [Test])
+--        print items         -- (items :: [Test])
 -- @
 --
 -- See examples/ and test/ directories for more detail examples.
+
+-- $proxy
+--
+-- In order to avoid ambiguity errors, most API calls need a 'Proxy' argument
+-- to find out on which table or index to operate. These proxies are automatically
+-- generated as a name of type prepended with "t" for tables and "i" for indexes.
+--
+-- A proxy for table Test will have name tTest, for index TestIndex the name will
+-- be iTestIndex.
+
+-- $lens
+--
+-- If the field names in the table record start with an underscore, the lens
+-- get automatically generated for accessing the fields. The lens are polymorphic,
+-- you can use them to access the fields of both main table and all the indexes.
+--
+-- @
+-- data Test = Test {
+--     _messageid :: T.Text
+--   , _category :: T.Text
+--   , _subject :: T.Text
+-- } deriving (Show)
+-- data TestIndex = TestIndex {
+--     _category :: T.Text
+--   , _messageid :: T.Text
+-- }
+-- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
+--
+-- doWithTest :: Test -> ...
+-- doWithTest item = (item ^. category) ...
+--
+-- doWithItemIdx :: TestIndex -> ..
+-- getCategoryIdx item = (item ^. category) ...
+-- @

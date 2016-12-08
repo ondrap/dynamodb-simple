@@ -184,7 +184,6 @@ genBaseCollection coll collrange tblname mparent translate = do
     case mparent of
       Nothing -> do
          mkCollectionProxy True
-         -- $(varP proxyName) = Proxy
          lift [d|
              instance DynamoTable $(conT coll) $(conT $ mrange collrange) where
                 tableName _ = $(appE (varE 'T.pack) (litE (StringL tblname)))

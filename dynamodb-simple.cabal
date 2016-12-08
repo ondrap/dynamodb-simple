@@ -12,7 +12,7 @@ homepage:            https://github.com/ondrap/dynamodb-simple
 bug-reports:         https://github.com/ondrap/dynamodb-simple/issues
 category:            Database
 build-type:          Simple
-extra-source-files:  README.md
+extra-source-files:  README.md changelog.md
 cabal-version:       >=1.10
 
 source-repository head

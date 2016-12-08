@@ -12,7 +12,7 @@
 --
 -- Example as used in nested structure for scan:
 --
--- > scanCond (colCtvrty <!:> "a" <.> colInTreti <.> colInnPrvni ==. "x") 20
+-- > scanCond (hashitem' <!:> "a" <.> author' <.> name' ==. "x") 20
 module Database.DynamoDB.Filter (
       -- * Condition datatype
       FilterCondition(Not)
