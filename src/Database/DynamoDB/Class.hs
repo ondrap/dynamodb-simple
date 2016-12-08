@@ -1,6 +1,9 @@
+{-# LANGUAGE CPP                    #-}
+#if __GLASGOW_HASKELL__ >= 800
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+#endif
 {-# OPTIONS_GHC -fno-warn-incomplete-uni-patterns #-}
 -- We have lots of pattern matching for allFieldNames, that is correct because of TH
-{-# LANGUAGE CPP                    #-}
 {-# LANGUAGE DataKinds              #-}
 {-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE FlexibleContexts       #-}
@@ -314,19 +317,17 @@ mkIndexHelper p = (keyschema, proj, attrdefs)
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (parentKey ++ [hashname, rangename])) $ allFieldNames (Proxy :: Proxy a)
 
-defaultCreateGlobalIndexRange :: forall a parent r2 hash rest xs rest2 range v1 v2.
-  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
-    Code a ~ '[hash ': range ': rest ],
-    DynamoScalar v1 hash, DynamoScalar v2 range) =>
+defaultCreateGlobalIndexRange :: forall a parent r2 hash rest range v1 v2.
+  (DynamoIndex a parent 'WithRange, DynamoTable parent r2,
+    Code a ~ '[hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateGlobalIndexRange p thr =
     (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
   where
     (keyschema, proj, attrdefs) = mkIndexHelper p
 
-createLocalIndex :: forall a parent r2 hash rest xs rest2 range v1 v2.
-  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code parent ~ '[ xs ': rest2 ],
-    Code a ~ '[hash ': range ': rest ],
+createLocalIndex :: forall a parent r2 hash rest range v1 v2.
+  (DynamoIndex a parent 'WithRange, DynamoTable parent r2, Code a ~ '[hash ': range ': rest ],
     DynamoScalar v1 hash, DynamoScalar v2 range) =>
   Proxy a -> (D.LocalSecondaryIndex, [D.AttributeDefinition])
 createLocalIndex p =
