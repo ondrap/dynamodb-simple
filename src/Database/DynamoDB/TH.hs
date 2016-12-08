@@ -301,14 +301,19 @@ mkMigrationFunc name table globindexes locindexes = do
 -- and smart constructors for column (tId', tBase', tDescr', etc.) and one function (migrate)
 -- that creates table and updates the indexes.
 --
--- The migration function has signature:
+-- The migration function has a signature:
 --
 -- >  MonadAWS m => HashMap T.Text ProvisionedThroughput -> Maybe StreamViewType -> m0 ()
 --
+-- ProvisionedThroughput hashmap keys are DynamoDB table or index names.
+--
 -- * Table by default equals name of the type.
+-- * Attribute names in an index table must be the same as attribute names in the main table
+--   (translateField tableFieldName == translateField indexFieldName)
 -- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.
 -- * Column name is an attribute name with appended tick: tId'
--- * Attribute names in an index table must be the same as Attribute names in the main table
+-- * Predefined proxies starting with "t" for tables and "i" for indexes (e.g. 'iTest', 'iTestIndex')
+-- * Polymorphic lens to access fields in both tables and indexes
 -- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId')
 --
 -- @
