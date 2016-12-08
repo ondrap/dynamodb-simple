@@ -49,6 +49,7 @@ import           Database.DynamoDB.Class
 import           Database.DynamoDB.Migration     (runMigration)
 import           Database.DynamoDB.Types
 import           Database.DynamoDB.Internal
+import           Database.DynamoDB.THLens
 
 -- | Configuration of TH macro for creating table instances
 data TableConfig = TableConfig {
@@ -154,9 +155,8 @@ mkTableDefs migname TableConfig{..} =
     migfunc <- lift $ mkMigrationFunc migname table (map (view _1) globalIndexes) (map (view _1) localIndexes)
     tell migfunc
     -- Lenses
-    -- when buildLens $ do
-    --     let origNames = map fst (getFieldNames id table)
-    --         lensFields = tblFieldNames
+    when buildLens $
+        createPolyLenses translateField table (map (view _1) allindexes)
 
 pkeySize :: RangeType -> Int
 pkeySize WithRange = 2
@@ -211,22 +211,6 @@ genBaseCollection coll collrange tblname mparent translate = do
         say $ ValD (VarP proxyName) (NormalB (ConE 'Proxy)) []
 
 
--- | Reify name and return list of record fields with type
-getFieldNames :: Name -> (String -> String) -> WriterT [Dec] Q [(String, Type)]
-getFieldNames tbl translate = do
-    info <- lift $ reify tbl
-    case getRecords info of
-      Left err -> fail $ "Table " <> show tbl <> ": " <> err
-      Right lst -> return $ map (over _1 translate) lst
-  where
-    getRecords :: Info -> Either String [(String, Type)]
-#if __GLASGOW_HASKELL__ >= 800
-    getRecords (TyConI (DataD _ _ _ _ [RecC _ vars] _)) = Right $ map (\(Name (OccName rname) _,_,typ) -> (rname, typ)) vars
-#else
-    getRecords (TyConI (DataD _ _ _ [RecC _ vars] _)) = Right $ map (\(Name (OccName rname) _,_,typ) -> (rname, typ)) vars
-#endif
-    getRecords _ = Left "not a record declaration with 1 constructor"
-
 toConstrName :: String -> String
 toConstrName = ("P_" <>) . over (ix 0) toUpper
 
@@ -250,9 +234,6 @@ buildColData fieldlist = do
           |] >>= tell
         say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT 'TypColumn)) (ConT constr))
         say $ ValD (VarP pat) (NormalB (VarE 'mkColumn)) []
-
-say :: Monad m => t -> WriterT [t] m ()
-say a = tell [a]
 
 -- | Derive 'DynamoEncodable' and prepare column instances for nested structures.
 deriveCollection :: Name -> (String -> String) -> Q [Dec]

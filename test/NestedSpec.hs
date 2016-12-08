@@ -2,6 +2,7 @@
 {-# LANGUAGE EmptyDataDecls        #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -55,7 +56,6 @@ data Test = Test {
   , _iMap      :: HashMap Name Inner
 } deriving (Show, Eq)
 mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
-makeLenses ''Test
 
 withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
 withDb msg code = it msg runcode

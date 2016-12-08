@@ -42,6 +42,7 @@ test = do
 - Local secondary indexes.
 - Tables with only hash keys as well as tables with combined hash and sort key.
 - Sparse indexes (define the column as `Maybe` in a table, omit the `Maybe` in index definition).
+- Automatically generate polymorphic lenses to access fields in main table and index records.
 - Standard datatypes including `Tagged` and basic default instances for data types supporting
   `Show/Read`.
 - New types can be added easily.
