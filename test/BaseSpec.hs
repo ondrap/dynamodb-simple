@@ -92,7 +92,7 @@ spec = do
         let squery = scanOpts & sFilterCondition .~ Just (iInt' >. 50)
                               & sLimit .~ Just 1
         res <- runConduit $ scanSource tTest squery =$= CL.consume
-        liftIO $ res `shouldBe` drop 50 newItems
+        liftIO $ sort res `shouldBe` sort (drop 50 newItems)
     withDb "querySource works correctly with qLimit" $ do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]

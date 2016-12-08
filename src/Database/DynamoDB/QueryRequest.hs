@@ -1,14 +1,13 @@
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
-{-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE ViewPatterns        #-}
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module Database.DynamoDB.QueryRequest (
   -- * Query
@@ -31,27 +30,29 @@ module Database.DynamoDB.QueryRequest (
 ) where
 
 
-import           Control.Arrow                   (first)
-import           Control.Lens                    (view, (%~), (.~), (^.), Lens')
-import           Control.Lens.TH                 (makeLenses)
-import           Control.Monad.Catch             (throwM)
-import           Data.Bool                       (bool)
-import           Data.Conduit                    (Conduit, Source, (=$=))
-import qualified Data.Conduit.List               as CL
-import           Data.Function                   ((&))
-import           Data.HashMap.Strict             (HashMap)
-import           Data.Monoid                     ((<>))
+import           Control.Arrow              (first)
+import           Control.Lens               (Lens', view, (%~), (.~), (^.))
+import           Control.Lens.TH            (makeLenses)
+import           Control.Monad.Catch        (throwM)
+import           Data.Bool                  (bool)
+import           Data.Coerce                (coerce)
+import           Data.Conduit               (Conduit, Source, (=$=))
+import qualified Data.Conduit.List          as CL
+import           Data.Foldable              (toList)
+import           Data.Function              ((&))
+import           Data.HashMap.Strict        (HashMap)
+import           Data.Monoid                ((<>))
 import           Data.Proxy
-import qualified Data.Text                       as T
+import           Data.Sequence              (Seq)
+import qualified Data.Sequence              as Seq
+import qualified Data.Text                  as T
 import           Generics.SOP
 import           Network.AWS
-import qualified Network.AWS.DynamoDB.Query      as D
-import qualified Network.AWS.DynamoDB.Scan       as D
-import qualified Network.AWS.DynamoDB.Types      as D
-import           Numeric.Natural                 (Natural)
-import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq
-import Data.Foldable (toList)
+import qualified Network.AWS.DynamoDB.Query as D
+import qualified Network.AWS.DynamoDB.Scan  as D
+import qualified Network.AWS.DynamoDB.Types as D
+import           Network.AWS.Pager          (AWSPager (..))
+import           Numeric.Natural            (Natural)
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
@@ -112,6 +113,32 @@ queryCmd q =
     addStartKey (Just (key, range)) =
         D.qExclusiveStartKey .~ dKeyToAttr (Proxy :: Proxy a) (key, range)
 
+-- | When https://github.com/brendanhay/amazonka/issues/340 is fixed, remove
+newtype FixedQuery = FixedQuery D.Query
+instance AWSRequest FixedQuery where
+  type Rs FixedQuery = D.QueryResponse
+  request (FixedQuery a) = coerce (request a)
+  response lgr svc _ = response lgr svc (Proxy :: Proxy D.Query)
+instance AWSPager FixedQuery where
+  page (FixedQuery dq) resp
+    | null lastkey = Nothing
+    | otherwise = Just $ FixedQuery (dq & D.qExclusiveStartKey .~ lastkey)
+    where
+      lastkey = resp ^. D.qrsLastEvaluatedKey
+
+newtype FixedScan = FixedScan D.Scan
+instance AWSRequest FixedScan where
+  type Rs FixedScan = D.ScanResponse
+  request (FixedScan a) = coerce (request a)
+  response lgr svc _ = response lgr svc (Proxy :: Proxy D.Scan)
+instance AWSPager FixedScan where
+  page (FixedScan dq) resp
+    | null lastkey = Nothing
+    | otherwise = Just $ FixedScan (dq & D.sExclusiveStartKey .~ lastkey)
+    where
+      lastkey = resp ^. D.srsLastEvaluatedKey
+
+
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
 --
@@ -120,7 +147,7 @@ querySource :: forall a t m v1 v2 hash range rest.
     (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
      DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> QueryOpts a hash range -> Source m a
-querySource _ q = paginate (queryCmd q) =$= rsDecode (view D.qrsItems)
+querySource _ q = paginate (FixedQuery (queryCmd q)) =$= rsDecode (view D.qrsItems)
 
 -- | Perform a simple, eventually consistent, query.
 --
@@ -230,7 +257,7 @@ scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 -- Note: see https://github.com/brendanhay/amazonka/issues/340
 scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
   => Proxy a -> ScanOpts a r -> Source m a
-scanSource _ q = paginate (scanCmd q) =$= rsDecode (view D.srsItems)
+scanSource _ q = paginate (FixedScan $ scanCmd q) =$= rsDecode (view D.srsItems)
 
 -- | Function to call bounded scans. Tries to return exactly requested number of items.
 --

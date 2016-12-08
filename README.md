@@ -90,9 +90,3 @@ Empty string and empty set are represented by omitting the value.
   (i.e. after schema change).
 * Empty list/empty hashmap is represented as empty list/hashmap; however it is allowed to be decoded
   even when the attribute is missing in order to allow better schema migrations.
-
-### Notes
-
-There is a bug in `amazonka-dynamodb` that causes the `Conduit`-based queries/scans not behave correctly
-under certain circumstances. It's also why the travis CI build of dynamodb-simple is failing
-right now.
