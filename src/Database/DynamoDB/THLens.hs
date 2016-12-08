@@ -17,7 +17,7 @@ import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
 -- | Create lenses if the field in the primary table starts with _.
 --
 -- class Test_lens_field00 a b | a -> b where
---   _treti :: Functor f => (b -> f b) -> a -> f a
+--   _field :: Functor f => (b -> f b) -> a -> f a
 -- instance Test_lens_field00 Test (Maybe T.Text) where
 --   field f t = (\txt -> t{_field=txt}) <$> f (_field t)
 createPolyLenses :: (String -> String) -> Name -> [Name] -> WriterT [Dec] Q ()
@@ -52,10 +52,17 @@ createPolyLenses translate table indexes = do
                 t <- lift $ newName "t"
                 val <- lift $ newName "val"
                 let fieldSel = mkName fieldname
+#if __GLASGOW_HASKELL__ >= 800
+                lift (pure $ InstanceD Nothing [] (AppT (AppT (ConT clsname) (ConT idx)) ftype)
+                  [FunD lensname [Clause [VarP f,VarP t] (NormalB (InfixE (Just (LamE [VarP val]
+                      (RecUpdE (VarE t) [(fieldSel,VarE val)]))) (VarE 'fmap)
+                                  (Just (AppE (VarE f) (AppE (VarE fieldSel) (VarE t)))))) []]])
+#else
                 lift (pure $ InstanceD [] (AppT (AppT (ConT clsname) (ConT idx)) ftype)
                   [FunD lensname [Clause [VarP f,VarP t] (NormalB (InfixE (Just (LamE [VarP val]
                       (RecUpdE (VarE t) [(fieldSel,VarE val)]))) (VarE 'fmap)
                                   (Just (AppE (VarE f) (AppE (VarE fieldSel) (VarE t)))))) []]])
+#endif
                     >>= say
 
 whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
