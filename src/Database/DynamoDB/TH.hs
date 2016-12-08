@@ -56,6 +56,7 @@ data TableConfig = TableConfig {
   , globalIndexes :: [(Name, RangeType, String)]  -- ^ Global index type, primary key type, index name
   , localIndexes :: [(Name, String)]              -- ^ Local index type, index name
   , translateField :: String -> String            -- ^ Translation of haskell field names to DynamoDB attribute names
+  , buildLens :: Bool                             -- ^ Builds polymorphic lens for main table and indexes for table fields starting with '_'
 }
 
 -- | Simple table configuration
@@ -70,6 +71,7 @@ tableConfig (table, tbltype) globidx locidx =
       , globalIndexes = map (\(n,r) -> (n, r, nameToStr n)) globidx
       , localIndexes = map (\n -> (n, nameToStr n)) locidx
       , translateField = defaultTranslate
+      , buildLens = True
     }
   where
     nameToStr (Name (OccName name) _) = name
@@ -151,6 +153,10 @@ mkTableDefs migname TableConfig{..} =
 
     migfunc <- lift $ mkMigrationFunc migname table (map (view _1) globalIndexes) (map (view _1) localIndexes)
     tell migfunc
+    -- Lenses
+    -- when buildLens $ do
+    --     let origNames = map fst (getFieldNames id table)
+    --         lensFields = tblFieldNames
 
 pkeySize :: RangeType -> Int
 pkeySize WithRange = 2
@@ -161,17 +167,17 @@ genBaseCollection :: Name -> RangeType -> String -> Maybe Name -> (String -> Str
 genBaseCollection coll collrange tblname mparent translate = do
     tblFieldNames <- getFieldNames coll translate
     let fieldNames = map fst tblFieldNames
-    let fieldList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL) fieldNames))
+    let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL) fieldNames)
     primaryList' <- case (collrange, fieldNames) of
                       (NoRange, hashname:_) -> return [hashname]
                       (WithRange, h:r:_)-> return [h,r]
                       _ -> fail "Table must have at least 1/2 fields based on range key"
-    let primaryList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL) primaryList'))
-    let tbltype = maybe (PromotedT 'IsTable) (const $ PromotedT 'IsIndex) mparent
+    let primaryList = listE (map (appE (varE 'T.pack) . litE . StringL) primaryList')
+    let tbltype = maybe (promotedT 'IsTable) (const $ promotedT 'IsIndex) mparent
 
     lift (deriveGenericOnly coll) >>= tell
     lift [d|
-      instance DynamoCollection $(pure (ConT coll)) $(pure (ConT $ mrange collrange)) $(pure tbltype) where
+      instance DynamoCollection $(conT coll) $(conT $ mrange collrange) $(tbltype) where
           allFieldNames _ = $(fieldList)
           primaryFields _ = $(primaryList)
       |] >>= tell
@@ -186,15 +192,15 @@ genBaseCollection coll collrange tblname mparent translate = do
       Just parent -> do
         mkCollectionProxy False
         lift [d|
-            instance DynamoIndex $(pure (ConT coll)) $(pure (ConT parent)) $(pure (ConT $ mrange collrange)) where
-                indexName _ = $(pure $ AppE (VarE 'T.pack) (LitE (StringL tblname)))
+            instance DynamoIndex $(conT coll) $(conT parent) $(conT $ mrange collrange) where
+                indexName _ = $(appE (varE 'T.pack) (litE (StringL tblname)))
               |] >>= tell
 
     -- Skip primary key, we cannot filter by it
     let constrNames = mkConstrNames tblFieldNames
     forM_ (drop (pkeySize collrange) constrNames) $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT coll)) 'FullPath
+        instance InCollection $(conT constr) $(conT coll) 'FullPath
         |] >>= tell
   where
     mrange WithRange = 'WithRange
@@ -239,7 +245,7 @@ buildColData fieldlist = do
         say $ DataD [] constr [] [] []
 #endif
         lift [d|
-            instance ColumnInfo $(pure (ConT constr)) where
+            instance ColumnInfo $(conT constr) where
                 columnName _ = T.pack fieldname
           |] >>= tell
         say $ SigD pat (AppT (AppT (AppT (ConT ''Column) ltype) (ConT 'TypColumn)) (ConT constr))
@@ -275,9 +281,9 @@ deriveCollection table translate =
 deriveEncodable :: Name -> (String -> String) -> WriterT [Dec] Q ()
 deriveEncodable table translate = do
     tblFieldNames <- getFieldNames table translate
-    let fieldList = pure (ListE (map (AppE (VarE 'T.pack) . LitE . StringL . fst) tblFieldNames))
+    let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL . fst) tblFieldNames)
     lift [d|
-      instance DynamoEncodable $(pure (ConT table)) where
+      instance DynamoEncodable $(conT table) where
           dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
           dDecode (Just attr) = gsDecodeG $(fieldList) (attr ^. avM)
           dDecode Nothing = Nothing
@@ -285,7 +291,7 @@ deriveEncodable table translate = do
     let constrs = mkConstrNames tblFieldNames
     forM_ constrs $ \constr ->
       lift [d|
-        instance InCollection $(pure (ConT constr)) $(pure (ConT table)) 'NestedPath
+        instance InCollection $(conT constr) $(conT table) 'NestedPath
         |] >>= tell
 
 -- | Creates top-leval variable as a call to a migration function with partially applied createIndex
@@ -312,7 +318,7 @@ mkMigrationFunc name table globindexes locindexes = do
 --
 -- Use 'mkTableDefs' to derive everything about a table and its indexes. After running the function,
 -- you will end up with lots of instances, data types for columns ('P_TId', 'P_TBase', 'P_TDescr')
--- and smart constructors for column ('colTId', 'colTBase', 'colTDescr', etc.) and one function (migrate)
+-- and smart constructors for column (tId', tBase', tDescr', etc.) and one function (migrate)
 -- that creates table and updates the indexes.
 --
 -- The migration function has signature:
@@ -321,7 +327,7 @@ mkMigrationFunc name table globindexes locindexes = do
 --
 -- * Table by default equals name of the type.
 -- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.
--- * Column name is capitalized attribute name with prepended 'col' ('colTId')
+-- * Column name is an attribute name with appended tick: tId'
 -- * Attribute names in an index table must be the same as Attribute names in the main table
 -- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId')
 --
