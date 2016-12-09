@@ -145,8 +145,6 @@ instance AWSPager FixedScan where
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
---
--- Note: see https://github.com/brendanhay/amazonka/issues/340
 querySource :: forall a t m v1 v2 hash range rest.
     (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
      DynamoScalar v1 hash, DynamoScalar v2 range)
@@ -257,8 +255,6 @@ scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
 -- | Conduit source for running a scan.
---
--- Note: see https://github.com/brendanhay/amazonka/issues/340
 scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
   => Proxy a -> ScanOpts a r -> Source m a
 scanSource _ q = paginate (FixedScan $ scanCmd q) =$= rsDecode (view D.srsItems)
@@ -312,7 +308,6 @@ scanCmd q =
 -- | Scan table using a given filter condition.
 --
 -- > scanCond (colAddress <!:> "Home" <.> colCity ==. "London") 10
--- Note: see https://github.com/brendanhay/amazonka/issues/340
 scanCond :: forall a m hash range rest r t.
     (MonadAWS m, HasPrimaryKey a r t, Code a ~ '[ hash ': range ': rest], TableScan a r t)
     => Proxy a -> FilterCondition a -> Int -> m [a]

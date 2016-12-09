@@ -31,10 +31,12 @@ import qualified Data.Semigroup as SEMI
 import           Database.DynamoDB.Types
 
 data ColumnType = TypColumn | TypSize
+
 -- | Representation of a column for filter queries
--- typ - datatype of column (Int, Text..)
--- coltype - TypColumn or TypSize (result of size(column))
--- col - instance of ColumnInfo, uniquely identify a column
+--
+-- - typ - datatype of column (Int, Text..)
+-- - coltype - TypColumn or TypSize (result of size(column))
+-- - col - instance of ColumnInfo, uniquely identify a column
 data Column typ (coltype :: ColumnType) col where
     Column :: NonEmpty IntraColName -> Column typ 'TypColumn col
     Size :: NonEmpty IntraColName -> Column Int 'TypSize col
@@ -200,7 +202,7 @@ type family UnMaybe a :: * where
 
 -- | Combine attributes from nested structures.
 --
--- > colAddress <.> colStreet
+-- > address' <.> street'
 (<.>) :: (InCollection col2 (UnMaybe typ) 'NestedPath)
       => Column typ 'TypColumn col1 -> Column typ2 'TypColumn col2 -> Column typ2 'TypColumn col1
 (<.>) (Column a1) (Column a2) = Column (a1 <> a2)
@@ -211,14 +213,14 @@ infixl 7 <.>
 
 -- | Access an index in a nested list.
 --
--- > colUsers <!> 0 <.> colName
+-- > users' <!> 0 <.> name'
 (<!>) :: Column [typ] 'TypColumn col -> Int -> Column typ 'TypColumn col
 (<!>) (Column a1) num = Column (a1 <> pure (IntraIndex num))
 infixl 8 <!>
 
 -- | Access a key in a nested hashmap.
 --
--- > colPhones <!:> "mobile" <.> colNumber
+-- > phones' <!:> "mobile" <.> number'
 (<!:>) :: IsText key => Column (HashMap key typ) 'TypColumn col -> key -> Column typ 'TypColumn col
 (<!:>) (Column a1) key = Column (a1 <> pure (IntraName (toText key)))
 infixl 8 <!:>

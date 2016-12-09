@@ -251,7 +251,7 @@ deriveCollection table translate =
     tblFieldNames <- getFieldNames table translate
     buildColData tblFieldNames
     -- Create instance DynamoEncodable
-    deriveEncodable table translate
+    deriveEncodable' table translate
 
 -- | Derive just the 'DynamoEncodable' instance
 -- for structures that were already derived using 'mkTableDefs'
@@ -266,8 +266,11 @@ deriveCollection table translate =
 -- > instance InCollection column_type P_Column1 'NestedPath
 -- > instance InCollection column_type P_Column2 'NestedPath
 -- > ...
-deriveEncodable :: Name -> (String -> String) -> WriterT [Dec] Q ()
-deriveEncodable table translate = do
+deriveEncodable :: Name -> (String -> String) -> Q [Dec]
+deriveEncodable name trans = execWriterT (deriveEncodable' name trans)
+
+deriveEncodable' :: Name -> (String -> String) -> WriterT [Dec] Q ()
+deriveEncodable' table translate = do
     tblFieldNames <- getFieldNames table translate
     let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL . fst) tblFieldNames)
     lift [d|
@@ -320,7 +323,7 @@ mkMigrationFunc name table globindexes locindexes = do
 --   (translateField tableFieldName == translateField indexFieldName)
 -- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.
 -- * Column name is an attribute name with appended tick: tId'
--- * Predefined proxies starting with "t" for tables and "i" for indexes (e.g. 'iTest', 'iTestIndex')
+-- * Predefined proxies starting with "t" for tables and "i" for indexes (e.g. 'tTest', 'iTestIndex')
 -- * Polymorphic lens to access fields in both tables and indexes
 -- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId')
 --

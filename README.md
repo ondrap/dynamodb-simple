@@ -65,7 +65,7 @@ test = do
 ### Limitations
 
 - Projections are not supported. Using some generic programming on tuples it should be possible.
-- You cannot compare attributes between themselves (i.e. `colCurrentAccount >=. colAverageAccount`).
+- You cannot compare attributes between themselves (i.e. `currentAccount' >=. averageAccount'`).
   I'm not sure this would be currently technically possible. Does anybody need it?
 
 ### Handling of NULLs
@@ -80,8 +80,8 @@ Empty string and empty set are represented by omitting the value.
 * `HashMap Text (Maybe a)` is not a good idea; missing values will disappear.
 * `Maybe (Set a)` will become `Nothing` on empty set
 * Don't try to use inequality comparisons (`>.`, `<.`) on empty strings.
-* If you use `colMaybeCol == Nothing`, it gets internally replaced
-  by `attr_missing(colMaybeCol)`, so it will behave as expected. The same with
+* If you use `maybeCol' == Nothing`, it gets internally replaced
+  by `attr_missing(maybeCol)`, so it will behave as expected. The same with
   empty `String` or `Set`. Keep that in mind when traversing nested structures.
 * In case of schema change, `Maybe` columns are considered `Nothing`.
 * In case of schema change, `String` columns are decoded as empty strings, `Set` columns

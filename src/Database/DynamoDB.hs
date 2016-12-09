@@ -223,7 +223,8 @@ deleteTable p = void $ send (D.deleteTable (tableName p))
 -- | Extract primary key from a record in a form that can be directly used by other functions.
 --
 -- You can use this on both main table or on index tables if they contain the primary key from
--- the main table.
+-- the main table. Table key is always projected to indexes anyway, so just define it in
+-- every index.
 tableKey :: forall a parent key. ContainsTableKey a parent key => a -> (Proxy parent, key)
 tableKey a = (Proxy, dTableKey a)
 
