@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE FlexibleInstances     #-}
 
 module BaseSpec where
 
@@ -67,8 +68,8 @@ spec = do
             testitem2 = Test "2" 3 "text" False 4.15 3 (Just "text")
         putItem testitem1
         putItem testitem2
-        it1 <- getItem tTest Strongly ("1", 2)
-        it2 <- getItem tTest Strongly ("2", 3)
+        it1 <- getItem Strongly (tTest, ("1", 2))
+        it2 <- getItem Strongly (tTest, ("2", 3))
         liftIO $ Just testitem1 `shouldBe` it1
         liftIO $ Just testitem2 `shouldBe` it2
     withDb "getItemBatch/putItemBatch work" $ do
@@ -76,7 +77,7 @@ spec = do
             newItems = map template [1..300]
         putItemBatch newItems
         --
-        let keys = map (snd . itemToKey) newItems
+        let keys = map (snd . tableKey) newItems
         items <- getItemBatch Strongly keys
         liftIO $ sort items `shouldBe` sort newItems
     withDb "insertItem doesn't overwrite items" $ do
@@ -153,9 +154,9 @@ spec = do
     withDb "updateItemByKey works" $ do
         let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
         putItem testitem1
-        new1 <- updateItemByKey (itemToKey testitem1)
+        new1 <- updateItemByKey (tableKey testitem1)
                                 ((iInt' +=. 5) <> (iText' =. "updated") <> (iMText' =. Nothing))
-        Just new2 <- getItem tTest Strongly (snd (itemToKey testitem1))
+        Just new2 <- getItem Strongly (tableKey testitem1)
         liftIO $ do
             new1 `shouldBe` new2
             iInt new1 `shouldBe` 7
@@ -197,8 +198,8 @@ spec = do
         putItem testitem1
         putItem testitem2
         (items, _) <- scan tTest scanOpts 10
-        deleteItemByKey (itemToKey testitem1)
-        deleteItemByKey (itemToKey testitem2)
+        deleteItemByKey (tableKey testitem1)
+        deleteItemByKey (tableKey testitem2)
         (items2, _) <- scan tTest scanOpts 10
         liftIO $ do
           length items `shouldBe` 2

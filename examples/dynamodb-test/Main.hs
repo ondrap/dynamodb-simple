@@ -74,7 +74,7 @@ main = do
         -- get some article
         [item] <- scanCond tArticle (artCoauthor' /=. Nothing) 1
         logmsg $ "Before update: " <> T.pack (show item)
-        newitem <- updateItemByKey (itemToKey item) (artCoauthor' <.> autGender' =. Female)
+        newitem <- updateItemByKey (tableKey item) (artCoauthor' <.> autGender' =. Female)
         logmsg $ "After update: " <> T.pack (show newitem)
 
       -- Delete

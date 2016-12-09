@@ -25,7 +25,8 @@ library
                        Database.DynamoDB.Update
   other-modules:       Database.DynamoDB.Class, Database.DynamoDB.Migration,
                        Database.DynamoDB.Internal, Database.DynamoDB.BatchRequest,
-                       Database.DynamoDB.QueryRequest, Database.DynamoDB.THLens
+                       Database.DynamoDB.QueryRequest, Database.DynamoDB.THLens,
+                       Database.DynamoDB.THContains
   build-depends:       base >=4.8 && <5, amazonka-dynamodb, generics-sop,
                        unordered-containers, text, lens, double-conversion,
                        semigroups, bytestring, containers, monad-supply,

@@ -42,6 +42,7 @@ module Database.DynamoDB.Class (
   , IndexCreate(..)
   , HasPrimaryKey(..)
   , createLocalIndex
+  , ContainsTableKey(..)
 ) where
 
 import           Control.Lens                     ((.~), sequenceOf, _2)
@@ -180,6 +181,10 @@ instance (DynamoIndex a p 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v h
 instance (DynamoIndex a p 'WithRange, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
       => IndexCreate a p 'WithRange where
   createGlobalIndex = defaultCreateGlobalIndexRange
+
+class ContainsTableKey a parent key | a -> parent key where
+  -- | Extract table primary key from an item, if possible
+  dTableKey :: a -> key
 
 -- | Return first field of a datatype
 gdFirstField :: forall a hash rest. (Generic a, Code a ~ '[ hash ': rest ]) => a -> hash

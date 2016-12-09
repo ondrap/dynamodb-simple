@@ -30,7 +30,7 @@ test = do
       --
       putItem (Test "news" "john" "test" 20)
       --
-      item <- getItem tTest Eventually ("news", "john")
+      item <- getItem Eventually (tTest, ("news", "john"))
       liftIO $ print item
       --
       items <- scanCond tTest (replies' >. 15) 10

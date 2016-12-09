@@ -50,6 +50,7 @@ import           Database.DynamoDB.Migration     (runMigration)
 import           Database.DynamoDB.Types
 import           Database.DynamoDB.Internal
 import           Database.DynamoDB.THLens
+import           Database.DynamoDB.THContains
 
 -- | Configuration of TH macro for creating table instances
 data TableConfig = TableConfig {
@@ -123,11 +124,11 @@ mkTableDefs migname TableConfig{..} =
     let (table, tblrange, tblname) = tableSetup
 
     tblFieldNames <- getFieldNames table translateField
-    let tblHashName = fst (head tblFieldNames)
     buildColData tblFieldNames
     genBaseCollection table tblrange tblname Nothing translateField
 
     -- Check, that hash key name in locindexes == hash key in primary table
+    let tblHashName = fst (head tblFieldNames)
     forM_ localIndexes $ \(idx, _) -> do
         idxHashName <- (fst . head) <$> getFieldNames idx translateField
         when (idxHashName /= tblHashName) $
@@ -143,20 +144,27 @@ mkTableDefs migname TableConfig{..} =
         let pkeytable = [True | _ <- [1..(pkeySize idxrange)] ] ++ repeat False
         forM_ (zip instfields pkeytable) $ \((fieldname, ltype), isKey) ->
             case lookup fieldname tblFieldNames of
+                -- Allow sparse index - 'Maybe a' in table, 'a' in index
                 Just (AppT (ConT mbtype) inptype)
-                  | mbtype == ''Maybe && inptype == ltype && isKey -> return () -- Allow sparse index - 'Maybe a' in table, 'a' in index
+                  | mbtype == ''Maybe && inptype == ltype && isKey -> return ()
+                -- Check if types differ
                 Just ptype
                   | ltype /= ptype -> fail $ "Record '" <> fieldname <> "' form index " <> show idx <> " has different type from table " <> show table
                                               <> ": " <> show ltype <> " /= " <> show ptype
                   | otherwise -> return ()
+                -- Unknown field, does not exist in main table
                 Nothing ->
                   fail ("Record '" <> fieldname <> "' from index " <> show idx <> " is not in present in table " <> show table)
-
+    -- Create migration function
     migfunc <- lift $ mkMigrationFunc migname table (map (view _1) globalIndexes) (map (view _1) localIndexes)
     tell migfunc
     -- Lenses
     when buildLens $
         createPolyLenses translateField table (map (view _1) allindexes)
+    -- Create ContainsTableKey instances to easily extract
+    let pkey = map fst $ take (pkeySize tblrange) tblFieldNames
+    forM_ (table : map (\(a,_,_) -> a) allindexes) $
+        createContainsTableKey translateField table pkey
 
 pkeySize :: RangeType -> Int
 pkeySize WithRange = 2

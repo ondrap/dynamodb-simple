@@ -68,7 +68,7 @@ module Database.DynamoDB (
     -- * Delete table
   , deleteTable
     -- * Utility functions
-  , itemToKey
+  , tableKey
 ) where
 
 import           Control.Lens                        ((%~), (.~), (^.))
@@ -125,8 +125,8 @@ insertItem item = do
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> Consistency -> PrimaryKey (Code a) r -> m (Maybe a)
-getItem p consistency key = do
+    => Consistency -> (Proxy a, PrimaryKey (Code a) r) -> m (Maybe a)
+getItem consistency (p, key) = do
   let cmd = dGetItem p key & D.giConsistentRead . consistencyL .~ consistency
   rs <- send cmd
   let result = rs ^. D.girsItem
@@ -203,7 +203,7 @@ updateItemByKey (p, pkey) actions
             Just res -> return res
             Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
   | otherwise = do
-      rs <- getItem p Strongly pkey
+      rs <- getItem Strongly (p, pkey)
       case rs of
           Just res -> return res
           Nothing -> throwM (DynamoException "Cannot decode item.")
@@ -222,9 +222,10 @@ deleteTable p = void $ send (D.deleteTable (tableName p))
 
 -- | Extract primary key from a record in a form that can be directly used by other functions.
 --
--- TODO: this should be callable on index structures containing primary key as well
-itemToKey :: (HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss]) => a -> (Proxy a, PrimaryKey (Code a) r)
-itemToKey a = (Proxy, dItemToKey a)
+-- You can use this on both main table or on index tables if they contain the primary key from
+-- the main table.
+tableKey :: forall a parent key. ContainsTableKey a parent key => a -> (Proxy parent, key)
+tableKey a = (Proxy, dTableKey a)
 
 -- $intro
 --
@@ -274,7 +275,7 @@ itemToKey a = (Proxy, dItemToKey a)
 --        -- Save data to database
 --        putItem (Test "news" "1-2-3-4" "New subject")
 --        -- Fetch data given primary key
---        item <- getItem Eventually ("news", "1-2-3-4")
+--        item <- getItem Eventually (tTest, ("news", "1-2-3-4"))
 --        liftIO $ print item       -- (item :: Maybe Test)
 --        -- Scan data using filter condition, return 10 results
 --        items <- scanCond tTest (subject' ==. "New subejct") 10
