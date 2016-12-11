@@ -59,6 +59,7 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
+import Data.Int (Int16, Int32, Int64)
 
 
 -- | Exceptions thrown by some dynamodb-simple actions.
@@ -130,6 +131,15 @@ instance DynamoScalar 'D.N Integer where
 instance DynamoScalar 'D.N Int where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
+instance DynamoScalar 'D.N Int16 where
+  scalarEncode = ScN . fromIntegral
+  scalarDecode (ScN num) = toBoundedInteger num
+instance DynamoScalar 'D.N Int32 where
+  scalarEncode = ScN . fromIntegral
+  scalarDecode (ScN num) = toBoundedInteger num
+instance DynamoScalar 'D.N Int64 where
+  scalarEncode = ScN . fromIntegral
+  scalarDecode (ScN num) = toBoundedInteger num
 
 instance DynamoScalar 'D.N Word where
   scalarEncode = ScN . fromIntegral
@@ -190,6 +200,18 @@ instance DynamoEncodable Int where
   dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
   dDecode Nothing = Nothing -- Fail on missing attr
 instance DynamoEncodable Word where
+  dEncode = Just . dScalarEncode
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
+  dDecode Nothing = Nothing -- Fail on missing attr
+instance DynamoEncodable Int16 where
+  dEncode = Just . dScalarEncode
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
+  dDecode Nothing = Nothing -- Fail on missing attr
+instance DynamoEncodable Int32 where
+  dEncode = Just . dScalarEncode
+  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
+  dDecode Nothing = Nothing -- Fail on missing attr
+instance DynamoEncodable Int64 where
   dEncode = Just . dScalarEncode
   dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
   dDecode Nothing = Nothing -- Fail on missing attr
