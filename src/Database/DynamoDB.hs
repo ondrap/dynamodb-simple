@@ -211,8 +211,8 @@ updateItemByKey (p, pkey) actions
 -- | Update item in a table while specifying a condition
 updateItemCond_ :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> Action a -> FilterCondition a -> m ()
-updateItemCond_ (p, pkey) actions cond
+    => (Proxy a, PrimaryKey (Code a) r) -> FilterCondition a -> Action a -> m ()
+updateItemCond_ (p, pkey) cond actions
   | Just cmd <- dUpdateItem p pkey actions (Just cond) = void $ send cmd
   | otherwise = return ()
 
