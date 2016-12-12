@@ -146,7 +146,7 @@ instance DynamoScalar 'D.N Word where
   scalarDecode (ScN num) = toBoundedInteger num
 
 -- | Helper for tagged values
-instance DynamoScalar v a => DynamoScalar v (Tagged x a) where
+instance {-# OVERLAPPABLE #-} DynamoScalar v a => DynamoScalar v (Tagged x a) where
   scalarEncode = scalarEncode . unTagged
   scalarDecode a = Tagged <$> scalarDecode a
 
