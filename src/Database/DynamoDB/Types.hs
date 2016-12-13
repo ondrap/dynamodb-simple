@@ -111,7 +111,7 @@ dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.from
 -- > instance DynamoScalar Network.AWS.DynamoDB.Types.S T.Text where
 -- >    scalarEncode = ScS
 -- >    scalarDecode (ScS txt) = Just txt
-class (ScalarAuto v, DynamoEncodable a) => DynamoScalar (v :: D.ScalarAttributeType) a | a -> v where
+class ScalarAuto v => DynamoScalar (v :: D.ScalarAttributeType) a | a -> v where
   -- | Scalars must have total encoding function
   scalarEncode :: a -> ScalarValue v
   default scalarEncode :: (Show a, Read a) => a -> ScalarValue 'D.S
@@ -263,7 +263,7 @@ instance DynamoEncodable a => DynamoEncodable [a] where
   dDecode Nothing = Just mempty
   dIsMissing = null
 
-instance DynamoEncodable a => DynamoEncodable (Tagged v a) where
+instance {-# OVERLAPPABLE #-} DynamoEncodable a => DynamoEncodable (Tagged v a) where
   dEncode = dEncode . unTagged
   dDecode a = Tagged <$> dDecode a
   dIsMissing = dIsMissing . unTagged

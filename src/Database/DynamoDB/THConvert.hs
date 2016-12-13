@@ -14,7 +14,6 @@ import           Language.Haskell.TH
 
 import           Database.DynamoDB.THLens        (getFieldNames, say)
 
-
 getConstructor :: Name -> Q Name
 getConstructor tbl = do
     info <- reify tbl
@@ -26,13 +25,12 @@ getConstructor tbl = do
 #endif
         _ -> fail "not a record declaration with 1 constructor"
 
-
 createTableConversions :: (String -> String) -> Name -> [Name] -> WriterT [Dec] Q ()
 createTableConversions translate table idxes = do
   tblFields <- getFieldNames table translate
   let tblNames = map fst tblFields
   tblConstr <- lift $ getConstructor table
-  clsname <- lift $ newName "IndexToTable"
+  clsname <- lift $ newName $ "IndexToTable_" <> nameBase tblConstr
   a <- lift $ newName "a"
   let funcname = mkName ("to" <> nameBase table)
   say $ ClassD [] clsname [PlainTV a] []

@@ -23,7 +23,6 @@ import qualified Network.AWS.DynamoDB.Types as D
 import           Database.DynamoDB.TH
 import           Database.DynamoDB.Types
 
-
 -- Haskell datatype instances
 instance DynamoEncodable UUID where
   dEncode uuid = dEncode (UUID.toText uuid)
