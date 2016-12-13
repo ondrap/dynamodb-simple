@@ -130,8 +130,8 @@ insertItem item = do
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
-    => Consistency -> (Proxy a, PrimaryKey (Code a) r) -> m (Maybe a)
-getItem consistency (p, key) = do
+    => Consistency -> Proxy a -> PrimaryKey (Code a) r -> m (Maybe a)
+getItem consistency p key = do
   let cmd = dGetItem p key & D.giConsistentRead . consistencyL .~ consistency
   rs <- send cmd
   let result = rs ^. D.girsItem
@@ -144,15 +144,15 @@ getItem consistency (p, key) = do
 -- | Delete item from the database by specifying the primary key.
 deleteItemByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => (Proxy a, PrimaryKey (Code a) r) -> m ()
-deleteItemByKey (p, pkey) = void $ send (dDeleteItem p pkey)
+    => Proxy a -> PrimaryKey (Code a) r -> m ()
+deleteItemByKey p pkey = void $ send (dDeleteItem p pkey)
 
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
 deleteItemCondByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => (Proxy a, PrimaryKey (Code a) r) -> FilterCondition a -> m ()
-deleteItemCondByKey (p, pkey) cond =
+    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
+deleteItemCondByKey p pkey cond =
     let (expr, attnames, attvals) = dumpCondition cond
         cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
                                  & bool (D.diExpressionAttributeValues .~ attvals) id (null attvals) -- HACK; https://github.com/brendanhay/amazonka/issues/332
@@ -193,22 +193,22 @@ dUpdateItem p pkey actions mcond =
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItemByKey_ :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> Action a -> m ()
-updateItemByKey_ (p, pkey) actions
+    => Proxy a -> PrimaryKey (Code a) r -> Action a -> m ()
+updateItemByKey_ p pkey actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = void $ send cmd
   | otherwise = return ()
 
 updateItemByKey :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> Action a -> m a
-updateItemByKey (p, pkey) actions
+    => Proxy a -> PrimaryKey (Code a) r -> Action a -> m a
+updateItemByKey p pkey actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = do
         rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
         case gsDecode (rs ^. D.uirsAttributes) of
             Just res -> return res
             Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
   | otherwise = do
-      rs <- getItem Strongly (p, pkey)
+      rs <- getItem Strongly p pkey
       case rs of
           Just res -> return res
           Nothing -> throwM (DynamoException "Cannot decode item.")
@@ -216,8 +216,8 @@ updateItemByKey (p, pkey) actions
 -- | Update item in a table while specifying a condition
 updateItemCond_ :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
-    => (Proxy a, PrimaryKey (Code a) r) -> FilterCondition a -> Action a -> m ()
-updateItemCond_ (p, pkey) cond actions
+    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> Action a -> m ()
+updateItemCond_ p pkey cond actions
   | Just cmd <- dUpdateItem p pkey actions (Just cond) = void $ send cmd
   | otherwise = return ()
 
@@ -225,13 +225,13 @@ updateItemCond_ (p, pkey) cond actions
 deleteTable :: (MonadAWS m, DynamoTable a r) => Proxy a -> m ()
 deleteTable p = void $ send (D.deleteTable (tableName p))
 
--- | Extract primary key from a record in a form that can be directly used by other functions.
+-- | Extract primary key from a record.
 --
 -- You can use this on both main table or on index tables if they contain the primary key from
 -- the main table. Table key is always projected to indexes anyway, so just define it in
 -- every index.
-tableKey :: forall a parent key. ContainsTableKey a parent key => a -> (Proxy parent, key)
-tableKey a = (Proxy, dTableKey a)
+tableKey :: forall a parent key. ContainsTableKey a parent key => a -> key
+tableKey = dTableKey
 
 -- $intro
 --

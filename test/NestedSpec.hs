@@ -14,7 +14,7 @@ module NestedSpec where
 
 import           Control.Exception.Safe   (catchAny, finally)
 import           Control.Monad.IO.Class   (liftIO)
-import           Control.Lens             (set, makeLenses, (^.), (^?), ix, (^..))
+import           Control.Lens             (makeLenses, (^.), (^?), ix, (^..))
 import           Data.Function            ((&))
 import           Data.Hashable
 import           Data.HashMap.Strict      (HashMap)
@@ -83,8 +83,8 @@ spec = do
             testitem2 = Test "hash" 2 inner1 Nothing Set.empty [] HMap.empty
         putItem testitem1
         putItem testitem2
-        Just ritem1 <- getItem Strongly (tTest, ("hash", 1))
-        Just ritem2 <- getItem Strongly (tTest, ("hash", 2))
+        Just ritem1 <- getItem Strongly tTest ("hash", 1)
+        Just ritem2 <- getItem Strongly tTest ("hash", 2)
         liftIO $ testitem1 `shouldBe` ritem1
         liftIO $ testitem2 `shouldBe` ritem2
     withDb "Scan conditions" $ do
@@ -124,23 +124,23 @@ spec = do
         putItem testitem1
         putItem testitem2
         --
-        newitem1 <- updateItemByKey (tableKey testitem1) (iInner' <.> nFirst' =. "updated")
+        newitem1 <- updateItemByKey tTest (tableKey testitem1) (iInner' <.> nFirst' =. "updated")
         liftIO $ newitem1 ^. iInner . nFirst `shouldBe` "updated"
         --
-        newitem2 <- updateItemByKey (tableKey testitem1) (add iSet' (Set.singleton (Tagged "test2")))
+        newitem2 <- updateItemByKey tTest (tableKey testitem1) (add iSet' (Set.singleton (Tagged "test2")))
         liftIO $ newitem2 ^. iSet `shouldBe` Set.fromList [Tagged "test", Tagged "test2"]
         --
-        newitem3 <- updateItemByKey (tableKey testitem1) (prepend iList' [inner2, inner1])
+        newitem3 <- updateItemByKey tTest (tableKey testitem1) (prepend iList' [inner2, inner1])
         liftIO $ newitem3 ^. iList `shouldBe` [inner2, inner1, inner1]
         --
-        newitem4 <- updateItemByKey (tableKey testitem1) (delListItem iList' 1)
+        newitem4 <- updateItemByKey tTest (tableKey testitem1) (delListItem iList' 1)
         liftIO $ newitem4 ^. iList `shouldBe` [inner2, inner1]
         --
-        newitem5 <- updateItemByKey (tableKey testitem2) (iMap' <!:> Tagged "test" =. inner1)
+        newitem5 <- updateItemByKey tTest (tableKey testitem2) (iMap' <!:> Tagged "test" =. inner1)
         liftIO $ newitem5 ^.. iMap . traverse `shouldBe` [inner1]
         liftIO $ newitem5 ^? iMap . ix (Tagged "test")  `shouldBe` Just inner1
         --
-        newitem6 <- updateItemByKey (tableKey testitem2) (delHashKey iMap' (Tagged "test"))
+        newitem6 <- updateItemByKey tTest (tableKey testitem2) (delHashKey iMap' (Tagged "test"))
         liftIO $ newitem6 ^. iMap `shouldBe` HMap.empty
 
 
