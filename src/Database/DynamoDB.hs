@@ -39,6 +39,8 @@ module Database.DynamoDB (
     -- * Fetching items
   , getItem
   , getItemBatch
+  , leftJoin
+  , innerJoin
     -- * Query options
   , QueryOpts
   , queryOpts

@@ -205,6 +205,14 @@ spec = do
           length items `shouldBe` 2
           length items2 `shouldBe` 0
 
+    withDb "test left join" $ do
+        let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
+        let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
+        putItem testitem1
+        putItem testitem2
+        res <- leftJoin Strongly tTest [("first", ("1",2)), ("missing", ("1",5))]
+        liftIO $ res `shouldBe` [("first" :: String, Just testitem1), ("missing", Nothing)]
+
 
 main :: IO ()
 main = hspec spec
