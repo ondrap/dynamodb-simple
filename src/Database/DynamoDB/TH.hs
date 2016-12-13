@@ -28,7 +28,7 @@ module Database.DynamoDB.TH (
   , RangeType(..)
 ) where
 
-import           Control.Lens                    (ix, over, (.~), (^.), _1, view)
+import           Control.Lens                    (ix, over, (.~), (^.), _1, view, (^..))
 import           Control.Monad                   (forM_, when)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
@@ -51,6 +51,7 @@ import           Database.DynamoDB.Types
 import           Database.DynamoDB.Internal
 import           Database.DynamoDB.THLens
 import           Database.DynamoDB.THContains
+import           Database.DynamoDB.THConvert
 
 -- | Configuration of TH macro for creating table instances
 data TableConfig = TableConfig {
@@ -163,8 +164,10 @@ mkTableDefs migname TableConfig{..} =
         createPolyLenses translateField table (map (view _1) allindexes)
     -- Create ContainsTableKey instances to easily extract
     let pkey = map fst $ take (pkeySize tblrange) tblFieldNames
-    forM_ (table : map (\(a,_,_) -> a) allindexes) $
+    forM_ (table : (allindexes ^.. traverse . _1)) $
         createContainsTableKey translateField table pkey
+    -- Create toTable instances/classes
+    createTableConversions translateField table (allindexes ^.. traverse . _1)
 
 pkeySize :: RangeType -> Int
 pkeySize WithRange = 2
@@ -320,12 +323,14 @@ mkMigrationFunc name table globindexes locindexes = do
 --
 -- * Table by default equals name of the type.
 -- * Attribute names in an index table must be the same as attribute names in the main table
---   (translateField tableFieldName == translateField indexFieldName)
+--   (translateField tableFieldName == translateField indexFieldName).
 -- * Attribute name is a field name from a first underscore ('tId'). This should make it compatibile with lens.
 -- * Column name is an attribute name with appended tick: tId'
--- * Predefined proxies starting with "t" for tables and "i" for indexes (e.g. 'tTest', 'iTestIndex')
--- * Polymorphic lens to access fields in both tables and indexes
--- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId')
+-- * Predefined proxies starting with "t" for tables and "i" for indexes (e.g. 'tTest', 'iTestIndex').
+-- * Polymorphic lens to access fields in both tables and indexes.
+-- * For indexes with the same dataset as the base table, the conversion function (e.g. 'toTest')
+--   gets created for easy conversion between index and base type.
+-- * Auxiliary datatype for column is P_ followed by capitalized attribute name ('P_TId').
 --
 -- @
 -- data Test = Test {

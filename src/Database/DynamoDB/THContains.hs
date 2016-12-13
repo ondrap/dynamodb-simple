@@ -2,13 +2,13 @@
 module Database.DynamoDB.THContains where
 
 import           Control.Monad.Trans.Class       (lift)
-import Data.List (find)
-import Language.Haskell.TH
-import Data.Function ((&))
 import           Control.Monad.Trans.Writer.Lazy (WriterT, tell)
+import           Data.Function                   ((&))
+import           Data.List                       (find)
+import           Language.Haskell.TH
 
-import Database.DynamoDB.THLens (getFieldNames, whenJust)
-import Database.DynamoDB.Class (ContainsTableKey(..))
+import           Database.DynamoDB.Class         (ContainsTableKey (..))
+import           Database.DynamoDB.THLens        (getFieldNames, whenJust)
 
 -- | Create ContainsTableKey instance
 createContainsTableKey :: (String -> String) -> Name -> [String] -> Name -> WriterT [Dec] Q ()
