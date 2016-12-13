@@ -29,7 +29,7 @@ module Database.DynamoDB.TH (
 ) where
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1, view, (^..))
-import           Control.Monad                   (forM_, when)
+import           Control.Monad                   (forM_, unless, when)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
 import           Data.Bool                       (bool)
@@ -167,7 +167,8 @@ mkTableDefs migname TableConfig{..} =
     forM_ (table : (allindexes ^.. traverse . _1)) $
         createContainsTableKey translateField table pkey
     -- Create toTable instances/classes
-    createTableConversions translateField table (allindexes ^.. traverse . _1)
+    unless (null allindexes) $
+        createTableConversions translateField table (allindexes ^.. traverse . _1)
 
 pkeySize :: RangeType -> Int
 pkeySize WithRange = 2
