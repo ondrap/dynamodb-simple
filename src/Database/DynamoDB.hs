@@ -26,6 +26,9 @@ module Database.DynamoDB (
     -- * Lens support
     -- $lens
 
+    -- * Conversion support
+    -- $conversion
+
     -- * Data types
     DynamoException(..)
   , Consistency(..)
@@ -318,3 +321,10 @@ tableKey a = (Proxy, dTableKey a)
 -- doWithItemIdx :: TestIndex -> ..
 -- getCategoryIdx item = (item ^. category) ...
 -- @
+
+-- $conversion
+--
+-- Given a type 'Test' and an index type 'TestIndex',
+-- a function 'toTest' is created that converts from 'TestIndex' to 'Test'.
+-- Such function is created only if 'TestIndex' projects
+-- all fields from 'Test'.

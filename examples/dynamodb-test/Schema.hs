@@ -1,13 +1,16 @@
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeSynonymInstances  #-}
 
 -- {-# LANGUAGE DuplicateRecordFields #-}
 
 module Schema where
 
 import           Data.Scientific            (toBoundedInteger)
+import qualified Data.Set                   as Set
 import           Data.Tagged
 import qualified Data.Text                  as T
 import           Data.Time.Clock            (UTCTime)
@@ -16,7 +19,6 @@ import           Data.Time.Clock.POSIX      (POSIXTime, posixSecondsToUTCTime,
 import           Data.UUID                  (UUID)
 import qualified Data.UUID                  as UUID
 import qualified Network.AWS.DynamoDB.Types as D
-import qualified Data.Set                   as Set
 
 import           Database.DynamoDB.TH
 import           Database.DynamoDB.Types

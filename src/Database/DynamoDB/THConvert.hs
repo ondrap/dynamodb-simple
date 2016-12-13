@@ -52,13 +52,8 @@ createTableConversions translate table idxes = do
                     olist = zipWith ($) toJust $ map (varnames !!) varidxmap
                     ovars = foldl appE (conE tblConstr) olist
                 let func = funD funcname [clause [conP idxConstr ivars] (normalB ovars) []]
-#if __GLASGOW_HASKELL__ >= 800
-                lift (instanceD Nothing (pure []) (appT (conT clsname) (conT idxname))
-                      [func]) >>= say
-#else
                 lift (instanceD (pure []) (appT (conT clsname) (conT idxname))
                       [func]) >>= say
-#endif
   where
     makeJust (AppT (ConT mbtype) dsttype) srctype
         | mbtype == ''Maybe && dsttype == srctype = appE (conE 'Just) . varE
