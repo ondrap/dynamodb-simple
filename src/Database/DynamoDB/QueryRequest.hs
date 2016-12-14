@@ -96,7 +96,7 @@ queryOpts :: hash -> QueryOpts a hash range
 queryOpts key = QueryOpts key Nothing Nothing Eventually Forward Nothing Nothing
 
 -- | Generate a "D.Query" object
-queryCmd :: forall a t hash range. TableQuery a t hash range => QueryOpts a hash range -> D.Query
+queryCmd :: forall a t hash range. CanQuery a t hash range => QueryOpts a hash range -> D.Query
 queryCmd q =
     dQueryKey (Proxy :: Proxy a) (q ^. qHashKey) (q ^. qRangeCondition)
                   & D.qConsistentRead . consistencyL .~ (q ^. qConsistentRead)
@@ -144,14 +144,14 @@ instance AWSPager FixedScan where
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
-querySource :: forall a t m hash range. (TableQuery a t hash range, MonadAWS m)
+querySource :: forall a t m hash range. (CanQuery a t hash range, MonadAWS m)
   => Proxy a -> QueryOpts a hash range -> Source m a
 querySource _ q = paginate (FixedQuery (queryCmd q)) =$= rsDecode (view D.qrsItems)
 
 -- | Query an index, fetch primary key from the result and immediately read
 -- full items from the main table.
 queryOverIndex :: forall a t m v1 v2 hash r2 range rest parent.
-    (TableQuery a t hash range, MonadAWS m,
+    (CanQuery a t hash range, MonadAWS m,
      Code a ~ '[ hash ': range ': rest],
      DynamoIndex a parent 'WithRange, ContainsTableKey a parent (PrimaryKey parent r2),
      DynamoTable parent r2,
@@ -170,7 +170,7 @@ queryOverIndex _ q =
 --
 -- Simple to use function to query limited amount of data from database.
 querySimple :: forall a t m hash range.
-  (TableQuery a t hash range, MonadAWS m)
+  (CanQuery a t hash range, MonadAWS m)
   => Proxy a -- ^ Proxy type of a table to query
   -> hash        -- ^ Hash key
   -> Maybe (RangeOper range) -- ^ Range condition
@@ -184,7 +184,7 @@ querySimple p key range direction limit = do
 
 -- | Query with condition
 queryCond :: forall a t m hash range.
-  (TableQuery a t hash range, MonadAWS m)
+  (CanQuery a t hash range, MonadAWS m)
   => Proxy a
   -> hash        -- ^ Hash key
   -> Maybe (RangeOper range) -- ^ Range condition
@@ -202,7 +202,7 @@ queryCond p key range cond direction limit = do
 -- it means more calls to dynamodb. Return last evaluted key if end of data
 -- was not reached. Use 'qStartKey' to continue reading the query.
 query :: forall a t m range hash.
-  (TableQuery a t hash range, MonadAWS m)
+  (CanQuery a t hash range, MonadAWS m)
   => Proxy a
   -> QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch

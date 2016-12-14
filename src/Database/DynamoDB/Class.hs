@@ -35,7 +35,7 @@ module Database.DynamoDB.Class (
   , gsEncode
   , gsEncodeG
   , PrimaryKey
-  , TableQuery(..)
+  , CanQuery(..)
   , TableScan
   , TableCreate(..)
   , IndexCreate(..)
@@ -128,8 +128,8 @@ instance (DynamoTable a 'WithRange, Code a ~ '[ hash ': range ': xss ], DynamoSc
     => TableCreate a 'WithRange where
   createTable = defaultCreateTableRange
 
--- | Instance for tables that can be queried
-class (DynamoCollection a 'WithRange t, HasPrimaryKey a 'WithRange t) => TableQuery a (t :: TableType) hash range | a -> hash range where
+-- | Class for tables/indexes that can be queried
+class (DynamoCollection a 'WithRange t, HasPrimaryKey a 'WithRange t) => CanQuery a (t :: TableType) hash range | a -> hash range where
   -- | Return table name and index name
   qTableName :: Proxy a -> T.Text
   qIndexName :: Proxy a -> Maybe T.Text
@@ -140,7 +140,7 @@ class (DynamoCollection a 'WithRange t, HasPrimaryKey a 'WithRange t) => TableQu
 instance  (DynamoCollection a 'WithRange 'IsTable, DynamoTable a 'WithRange,
            Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range,
            PrimaryKey a 'WithRange ~ (hash, range))
-    => TableQuery a 'IsTable hash range where
+    => CanQuery a 'IsTable hash range where
   dQueryKey = defaultQueryKey
   qTableName = tableName
   qIndexName _ = Nothing
@@ -148,12 +148,13 @@ instance  (DynamoCollection a 'WithRange 'IsTable, DynamoTable a 'WithRange,
 instance  (DynamoCollection a 'WithRange 'IsIndex, DynamoIndex a parent 'WithRange, DynamoTable parent r1,
             Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range,
             PrimaryKey a 'WithRange ~ (hash, range))
-        => TableQuery a 'IsIndex hash range where
+        => CanQuery a 'IsIndex hash range where
   dQueryKey = defaultQueryKey
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
   dQueryKeyToAttr = dKeyToAttr
 
+-- | Class for tables/indexes that can be scanned
 class (DynamoCollection a r t, HasPrimaryKey a r t) => TableScan a (r :: RangeType) (t :: TableType) where
   -- | Return table name and index name
   qsTableName :: Proxy a -> T.Text
@@ -169,7 +170,7 @@ instance (DynamoCollection a r 'IsIndex,
   qsIndexName = Just . indexName
   dScan = defaultScan
 
--- Synonym to call PrimaryKey' without the Code
+-- | Type family that returns a primary key of a table/index depending on the 'RangeType' parameter.
 type PrimaryKey a r = PrimaryKey' (Code a) r
 -- | Parameter type for queryKeyRange
 type family PrimaryKey' (a :: [[*]]) (r :: RangeType) :: * where
@@ -191,6 +192,7 @@ instance (DynamoIndex a p 'WithRange, Code a ~ '[ hash ': range ': rest ], Dynam
       => IndexCreate a p 'WithRange where
   createGlobalIndex = defaultCreateGlobalIndexRange
 
+-- | Class for indexes that contain primary key of the parent table
 class ContainsTableKey a parent key | a -> parent key where
   -- | Extract table primary key from an item, if possible
   dTableKey :: a -> key
@@ -275,7 +277,7 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash)),
                D.attributeDefinition rangename (dType (Proxy :: Proxy range))]
 
-defaultQueryKey :: (TableQuery a t hash range, DynamoScalar v1 hash, DynamoScalar v2 range)
+defaultQueryKey :: (CanQuery a t hash range, DynamoScalar v1 hash, DynamoScalar v2 range)
     => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 defaultQueryKey p key Nothing =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"

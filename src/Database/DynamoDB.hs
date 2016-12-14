@@ -187,7 +187,7 @@ dUpdateItem p pkey actions mcond =
     addCondition Nothing = id -- Cannot happen anyway
 
 
--- | Update item in a table
+-- | Update item in a table.
 --
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItemByKey_ :: forall a m r.
@@ -196,6 +196,7 @@ updateItemByKey_ p pkey actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = void $ send cmd
   | otherwise = return ()
 
+-- | Update item in a database, return an updated version of the item.
 updateItemByKey :: forall a m r.
       (MonadAWS m, DynamoTable a r) => Proxy a -> PrimaryKey a r -> Action a -> m a
 updateItemByKey p pkey actions
@@ -210,14 +211,14 @@ updateItemByKey p pkey actions
           Just res -> return res
           Nothing -> throwM (DynamoException "Cannot decode item.")
 
--- | Update item in a table while specifying a condition
+-- | Update item in a table while specifying a condition.
 updateItemCond_ :: forall a m r. (MonadAWS m, DynamoTable a r)
     => Proxy a -> PrimaryKey a r -> FilterCondition a -> Action a -> m ()
 updateItemCond_ p pkey cond actions
   | Just cmd <- dUpdateItem p pkey actions (Just cond) = void $ send cmd
   | otherwise = return ()
 
--- | Delete table from DynamoDB.
+-- | Delete a table from DynamoDB.
 deleteTable :: (MonadAWS m, DynamoTable a r) => Proxy a -> m ()
 deleteTable p = void $ send (D.deleteTable (tableName p))
 
