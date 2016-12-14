@@ -39,8 +39,6 @@ module Database.DynamoDB (
     -- * Fetching items
   , getItem
   , getItemBatch
-  , leftJoin
-  , innerJoin
     -- * Query options
   , QueryOpts
   , queryOpts
@@ -50,6 +48,7 @@ module Database.DynamoDB (
   , querySimple
   , queryCond
   , querySource
+  , querySourceChunks
   , queryOverIndex
     -- * Scan options
   , ScanOpts
@@ -58,7 +57,11 @@ module Database.DynamoDB (
     -- * Performing scan
   , scan
   , scanSource
+  , scanSourceChunks
   , scanCond
+    -- * Helper conduits
+  , leftJoin
+  , innerJoin
     -- * Data entry
   , putItem
   , putItemBatch

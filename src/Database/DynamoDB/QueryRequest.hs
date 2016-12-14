@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP                    #-}
+{-# LANGUAGE CPP                 #-}
 #if __GLASGOW_HASKELL__ >= 800
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 #endif
@@ -19,11 +19,13 @@ module Database.DynamoDB.QueryRequest (
   , querySimple
   , queryCond
   , querySource
+  , querySourceChunks
   , queryOverIndex
   -- * Scan
   , scan
   , scanCond
   , scanSource
+  , scanSourceChunks
   -- * Query options
   , QueryOpts
   , queryOpts
@@ -32,45 +34,47 @@ module Database.DynamoDB.QueryRequest (
   , ScanOpts
   , scanOpts
   , sFilterCondition, sConsistentRead, sLimit, sParallel, sStartKey
+  -- * Helper conduits
+  , leftJoin
+  , innerJoin
 ) where
 
 
-import           Control.Arrow              (first)
-import           Control.Lens               (Lens', view, (%~), (.~), (^.))
-import           Control.Lens.TH            (makeLenses)
-import           Control.Monad.Catch        (throwM)
-import           Data.Bool                  (bool)
-import           Data.Coerce                (coerce)
-import           Data.Conduit               (Conduit, Source, (=$=))
-import qualified Data.Conduit.List          as CL
-import           Data.Foldable              (toList)
-import           Data.Function              ((&))
-import           Data.HashMap.Strict        (HashMap)
-import           Data.Monoid                ((<>))
+import           Control.Arrow                  (first)
+import           Control.Arrow                  (second)
+import           Control.Lens                   (Lens', sequenceOf, view, (%~),
+                                                 (.~), (^.), _2)
+import           Control.Lens.TH                (makeLenses)
+import           Control.Monad.Catch            (throwM)
+import           Data.Bool                      (bool)
+import           Data.Coerce                    (coerce)
+import           Data.Conduit                   (Conduit, Source, (=$=))
+import qualified Data.Conduit.List              as CL
+import           Data.Foldable                  (toList)
+import           Data.Function                  ((&))
+import           Data.HashMap.Strict            (HashMap)
+import qualified Data.Map                       as Map
+import           Data.Maybe                     (mapMaybe)
+import           Data.Monoid                    ((<>))
 import           Data.Proxy
-import           Data.Sequence              (Seq)
-import qualified Data.Sequence              as Seq
-import qualified Data.Text                  as T
+import           Data.Sequence                  (Seq)
+import qualified Data.Sequence                  as Seq
+import qualified Data.Text                      as T
 import           Generics.SOP
 import           Network.AWS
-import qualified Network.AWS.DynamoDB.Query as D
-import qualified Network.AWS.DynamoDB.Scan  as D
-import qualified Network.AWS.DynamoDB.Types as D
-import           Network.AWS.Pager          (AWSPager (..))
-import           Numeric.Natural            (Natural)
+import qualified Network.AWS.DynamoDB.Query     as D
+import qualified Network.AWS.DynamoDB.Scan      as D
+import qualified Network.AWS.DynamoDB.Types     as D
+import           Network.AWS.Pager              (AWSPager (..))
+import           Numeric.Natural                (Natural)
 
+import           Database.DynamoDB.BatchRequest (getItemBatch)
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
 import           Database.DynamoDB.Internal
 import           Database.DynamoDB.Types
-import           Database.DynamoDB.BatchRequest (getItemBatch)
 
-
--- | Helper function to decode data from the conduit.
-rsDecode :: (MonadAWS m, DynamoCollection a r t)
-    => (i -> [HashMap T.Text D.AttributeValue]) -> Conduit i m a
-rsDecode trans = CL.mapFoldable trans =$= CL.mapM rsDecoder
-
+-- | Decode data, throw exception if decoding fails.
 rsDecoder :: (MonadAWS m, DynamoCollection a r t)
     => HashMap T.Text D.AttributeValue -> m a
 rsDecoder item =
@@ -142,11 +146,17 @@ instance AWSPager FixedScan where
       lastkey = resp ^. D.srsLastEvaluatedKey
 
 
+-- | Same as 'querySource', but return data in original chunks
+querySourceChunks :: forall a t m hash range. (CanQuery a t hash range, MonadAWS m)
+  => Proxy a -> QueryOpts a hash range -> Source m [a]
+querySourceChunks _ q = paginate (FixedQuery (queryCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
+
+
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
 querySource :: forall a t m hash range. (CanQuery a t hash range, MonadAWS m)
   => Proxy a -> QueryOpts a hash range -> Source m a
-querySource _ q = paginate (FixedQuery (queryCmd q)) =$= rsDecode (view D.qrsItems)
+querySource p q = querySourceChunks p q =$= CL.concat
 
 -- | Query an index, fetch primary key from the result and immediately read
 -- full items from the main table.
@@ -157,11 +167,10 @@ queryOverIndex :: forall a t m v1 v2 hash r2 range rest parent.
      DynamoTable parent r2,
      DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> QueryOpts a hash range -> Source m parent
-queryOverIndex _ q =
-    paginate (FixedQuery (queryCmd q)) =$= CL.mapFoldableM batchParent
+queryOverIndex p q =
+   querySourceChunks p q =$= CL.mapFoldableM batchParent
   where
-    batchParent resp = do
-      (vals :: [a]) <- mapM rsDecoder (resp ^. D.qrsItems)
+    batchParent vals = do
       let keys = map dTableKey vals
       -- TODO: it would be nice if we could paginate requests from getItemBatch downstraem
       getItemBatch (q ^. qConsistentRead) keys
@@ -266,10 +275,13 @@ makeLenses ''ScanOpts
 scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
+-- | Conduit source for running scan; the same as 'scanSource', but return results in chunks as they come
+scanSourceChunks :: (MonadAWS m, TableScan a r t) => Proxy a -> ScanOpts a r -> Source m [a]
+scanSourceChunks _ q = paginate (FixedScan (scanCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.srsItems))
+
 -- | Conduit source for running a scan.
-scanSource :: (MonadAWS m, TableScan a r t)
-  => Proxy a -> ScanOpts a r -> Source m a
-scanSource _ q = paginate (FixedScan $ scanCmd q) =$= rsDecode (view D.srsItems)
+scanSource :: (MonadAWS m, TableScan a r t) => Proxy a -> ScanOpts a r -> Source m a
+scanSource p q = scanSourceChunks p q =$= CL.concat
 
 -- | Function to call bounded scans. Tries to return exactly requested number of items.
 --
@@ -323,3 +335,30 @@ scanCond _ cond limit = do
   let opts = scanOpts & sFilterCondition .~ Just cond
       cmd = scanCmd opts
   fst <$> boundedFetch D.sExclusiveStartKey (view D.srsItems) (view D.srsLastEvaluatedKey) cmd limit
+
+-- | Conduit to do a left join on the items being sent; supposed to be used with querySourceChunks
+--
+-- The 'foreign key' must have an 'Ord' to facilitate faster searching
+leftJoin :: forall a b m r.
+    (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
+    => Consistency
+    -> Proxy a -- ^ Proxy type for the right table
+    -> (b -> PrimaryKey a r)
+    -> Conduit [b] m [(b, Maybe a)]
+leftJoin consistency _ getkey = CL.mapM doJoin
+  where
+    doJoin input = do
+      let keys = map getkey input
+      rightTbl <- getItemBatch consistency keys
+      let resultMap = Map.fromList $ map (\res -> (dTableKey res,res)) rightTbl
+      return $ map (second (`Map.lookup` resultMap)) $ zip input keys
+
+-- | The same as 'leftJoin', but discard items that do not exist in the right table
+innerJoin :: forall a b m r.
+    (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
+    => Consistency
+    -> Proxy a -- ^ Proxy type for the right table
+    -> (b -> PrimaryKey a r)
+    -> Conduit [b] m [(b, a)]
+innerJoin consistency p getkey =
+    leftJoin consistency p getkey =$= CL.map (mapMaybe (sequenceOf _2))
