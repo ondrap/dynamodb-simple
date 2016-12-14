@@ -104,11 +104,11 @@ import           Database.DynamoDB.QueryRequest
 
 
 dDeleteItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey (Code a) r -> D.DeleteItem
+          => Proxy a -> PrimaryKey a r -> D.DeleteItem
 dDeleteItem p pkey = D.deleteItem (tableName p) & D.diKey .~ dKeyToAttr p pkey
 
 dGetItem :: (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey (Code a) r -> D.GetItem
+          => Proxy a -> PrimaryKey a r -> D.GetItem
 dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyToAttr p pkey
 
 -- | Write item into the database; overwrite any previously existing item with the same primary key.
@@ -131,7 +131,7 @@ insertItem item = do
 -- | Read item from the database; primary key is either a hash key or (hash,range) tuple depending on the table.
 getItem :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
-    => Consistency -> Proxy a -> PrimaryKey (Code a) r -> m (Maybe a)
+    => Consistency -> Proxy a -> PrimaryKey a r -> m (Maybe a)
 getItem consistency p key = do
   let cmd = dGetItem p key & D.giConsistentRead . consistencyL .~ consistency
   rs <- send cmd
@@ -145,14 +145,14 @@ getItem consistency p key = do
 -- | Delete item from the database by specifying the primary key.
 deleteItemByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> PrimaryKey (Code a) r -> m ()
+    => Proxy a -> PrimaryKey a r -> m ()
 deleteItemByKey p pkey = void $ send (dDeleteItem p pkey)
 
 -- | Delete item from the database by specifying the primary key and a condition.
 -- Throws AWS exception if the condition does not succeed.
 deleteItemCondByKey :: forall m a r hash range rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> m ()
+    => Proxy a -> PrimaryKey a r -> FilterCondition a -> m ()
 deleteItemCondByKey p pkey cond =
     let (expr, attnames, attvals) = dumpCondition cond
         cmd = dDeleteItem p pkey & D.diExpressionAttributeNames .~ attnames
@@ -164,7 +164,7 @@ deleteItemCondByKey p pkey cond =
 -- key, so that only existing objects are modified
 dUpdateItem :: forall a r hash range xss.
             (DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey (Code a) r -> Action a -> Maybe (FilterCondition a) ->  Maybe D.UpdateItem
+          => Proxy a -> PrimaryKey a r -> Action a -> Maybe (FilterCondition a) ->  Maybe D.UpdateItem
 dUpdateItem p pkey actions mcond =
     genAction <$> dumpActions actions
   where
@@ -194,14 +194,14 @@ dUpdateItem p pkey actions mcond =
 -- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
 updateItemByKey_ :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => Proxy a -> PrimaryKey (Code a) r -> Action a -> m ()
+    => Proxy a -> PrimaryKey a r -> Action a -> m ()
 updateItemByKey_ p pkey actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = void $ send cmd
   | otherwise = return ()
 
 updateItemByKey :: forall a m r hash range rest.
       (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest ])
-    => Proxy a -> PrimaryKey (Code a) r -> Action a -> m a
+    => Proxy a -> PrimaryKey a r -> Action a -> m a
 updateItemByKey p pkey actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = do
         rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
@@ -217,7 +217,7 @@ updateItemByKey p pkey actions
 -- | Update item in a table while specifying a condition
 updateItemCond_ :: forall a m r hash range rest.
       (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest ])
-    => Proxy a -> PrimaryKey (Code a) r -> FilterCondition a -> Action a -> m ()
+    => Proxy a -> PrimaryKey a r -> FilterCondition a -> Action a -> m ()
 updateItemCond_ p pkey cond actions
   | Just cmd <- dUpdateItem p pkey actions (Just cond) = void $ send cmd
   | otherwise = return ()

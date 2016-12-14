@@ -158,7 +158,7 @@ querySource _ q = paginate (FixedQuery (queryCmd q)) =$= rsDecode (view D.qrsIte
 queryOverIndex :: forall a t m v1 v2 hash hash2 r1 r2 range range2 rest rest2 parent.
     (TableQuery a t, MonadAWS m,
      Code a ~ '[ hash ': range ': rest], Code parent ~ '[ hash2 ': range2 ': rest2 ],
-     DynamoIndex a parent r1, ContainsTableKey a parent (PrimaryKey (Code parent) r2),
+     DynamoIndex a parent r1, ContainsTableKey a parent (PrimaryKey parent r2),
      DynamoTable parent r2, HasPrimaryKey parent r2 'IsTable,
      DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> QueryOpts a hash range -> Source m parent
@@ -214,7 +214,7 @@ query :: forall a t v1 v2 m range hash rest.
   => Proxy a
   -> QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch
-  -> m ([a], Maybe (PrimaryKey (Code a) 'WithRange))
+  -> m ([a], Maybe (PrimaryKey a 'WithRange))
 query _ opts limit = do
     -- Add qLimit to the opts if not already there - and if there is no condition
     let cmd = queryCmd (opts & addQLimit)
@@ -232,7 +232,7 @@ boundedFetch :: forall a r t m range hash cmd rest.
   -> (Rs cmd -> HashMap T.Text D.AttributeValue)
   -> cmd
   -> Int -- ^ Maximum number of items to fetch
-  -> m ([a], Maybe (PrimaryKey (Code a) r))
+  -> m ([a], Maybe (PrimaryKey a r))
 boundedFetch startLens rsResult rsLast startcmd limit = do
       (result, nextcmd) <- unfoldLimit fetch startcmd limit
       if | length result > limit ->
@@ -268,7 +268,7 @@ data ScanOpts a r = ScanOpts {
   , _sConsistentRead :: Consistency
   , _sLimit :: Maybe Natural
   , _sParallel :: Maybe (Natural, Natural) -- ^ (Segment number, TotalSegments)
-  , _sStartKey :: Maybe (PrimaryKey (Code a) r)
+  , _sStartKey :: Maybe (PrimaryKey a r)
 }
 makeLenses ''ScanOpts
 scanOpts :: ScanOpts a r
@@ -286,7 +286,7 @@ scan :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t, HasPri
   => Proxy a
   -> ScanOpts a r  -- ^ Scan settings
   -> Int  -- ^ Required result count
-  -> m ([a], Maybe (PrimaryKey (Code a) r)) -- ^ list of results, lastEvalutedKey or Nothing if end of data reached
+  -> m ([a], Maybe (PrimaryKey a r)) -- ^ list of results, lastEvalutedKey or Nothing if end of data reached
 scan _ opts limit = do
     let cmd = scanCmd (opts & addSLimit)
     boundedFetch D.sExclusiveStartKey (view D.srsItems) (view D.srsLastEvaluatedKey) cmd limit

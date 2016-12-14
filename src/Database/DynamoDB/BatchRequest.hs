@@ -93,7 +93,7 @@ putItemBatch lst = mapM_ go (chunkBatch 25 lst)
 -- | Get batch of items.
 getItemBatch :: forall m a r range hash rest.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
-    => Consistency -> [PrimaryKey (Code a) r] -> m [a]
+    => Consistency -> [PrimaryKey a r] -> m [a]
 getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
   where
     go keys = do
@@ -110,7 +110,7 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
           Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
 dDeleteRequest :: (HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey (Code a) r -> D.DeleteRequest
+          => Proxy a -> PrimaryKey a r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey
 
 -- | Batch version of 'deleteItemByKey'.
@@ -119,7 +119,7 @@ dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey
 -- were deleted in case of exception is unavailable.
 deleteItemBatchByKey :: forall m a r range hash rest.
     (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> [PrimaryKey (Code a) r] -> m ()
+    => Proxy a -> [PrimaryKey a r] -> m ()
 deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
   where
     go keys = do
@@ -134,10 +134,10 @@ deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
 -- The 'foreign key' must have an 'Ord' to facilitate faster searching
 leftJoin :: forall a m r hash range rest b.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest],
-      Ord (PrimaryKey (Code a) r), ContainsTableKey a a (PrimaryKey (Code a) r))
+      Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency
     -> Proxy a -- ^ Proxy type for the right table
-    -> [(b, PrimaryKey (Code a) r)]   -- ^ Left table + primary key for the right table
+    -> [(b, PrimaryKey a r)]   -- ^ Left table + primary key for the right table
     -> m [(b, Maybe a)]               -- ^ Left table + value from right table, if found
 leftJoin consistency _ input = do
   rightTbl <- getItemBatch consistency (map snd input)
@@ -147,8 +147,8 @@ leftJoin consistency _ input = do
 -- | Return rows that are present in both tables
 innerJoin :: forall a m r hash range rest b.
     (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest],
-      Ord (PrimaryKey (Code a) r), ContainsTableKey a a (PrimaryKey (Code a) r))
-    => Consistency -> Proxy a -> [(b, PrimaryKey (Code a) r)] -> m [(b, a)]
+      Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
+    => Consistency -> Proxy a -> [(b, PrimaryKey a r)] -> m [(b, a)]
 innerJoin consistency p input = do
   res <- leftJoin consistency p input
   return $ mapMaybe (sequenceOf _2) res

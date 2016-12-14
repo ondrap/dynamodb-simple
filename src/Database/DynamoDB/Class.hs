@@ -82,10 +82,10 @@ class (Generic a, All2 DynamoEncodable (Code a))
   primaryFields :: Proxy a -> [T.Text]
 
 class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType) where
-  dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey (Code a) r
+  dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey a r
   dKeyToAttr :: (Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey (Code a) r -> HMap.HashMap T.Text D.AttributeValue
-  dAttrToKey :: Proxy a -> HMap.HashMap T.Text D.AttributeValue -> Maybe (PrimaryKey (Code a) r)
+            => Proxy a -> PrimaryKey a r -> HMap.HashMap T.Text D.AttributeValue
+  dAttrToKey :: Proxy a -> HMap.HashMap T.Text D.AttributeValue -> Maybe (PrimaryKey a r)
 
 instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
           DynamoScalar v hash) => HasPrimaryKey a 'NoRange t where
@@ -162,10 +162,12 @@ instance (DynamoCollection a r 'IsIndex,
   qsIndexName = Just . indexName
   dScan = defaultScan
 
+-- Synonym to call PrimaryKey' without the Code
+type PrimaryKey a r = PrimaryKey' (Code a) r
 -- | Parameter type for queryKeyRange
-type family PrimaryKey (a :: [[*]]) (r :: RangeType) :: * where
-    PrimaryKey ('[ key ': range ': rest ] ) 'WithRange = (key, range)
-    PrimaryKey ('[ key ': rest ]) 'NoRange = key
+type family PrimaryKey' (a :: [[*]]) (r :: RangeType) :: * where
+    PrimaryKey' ('[ key ': range ': rest ] ) 'WithRange = (key, range)
+    PrimaryKey' ('[ key ': rest ]) 'NoRange = key
 
 -- | Class representing a Global Secondary Index
 class DynamoCollection a r 'IsIndex => DynamoIndex a parent (r :: RangeType) | a -> parent r where
