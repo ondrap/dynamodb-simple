@@ -75,6 +75,13 @@ module Database.DynamoDB (
   , deleteTable
     -- * Utility functions
   , tableKey
+    -- * Typeclasses
+  , DynamoTable
+  , DynamoIndex
+  , PrimaryKey
+  , ContainsTableKey
+  , TableQuery
+  , TableScan
 ) where
 
 import           Control.Lens                        ((%~), (.~), (^.))
