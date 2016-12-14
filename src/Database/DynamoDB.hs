@@ -80,7 +80,7 @@ module Database.DynamoDB (
   , DynamoIndex
   , PrimaryKey
   , ContainsTableKey
-  , TableQuery
+  , CanQuery
   , TableScan
 ) where
 
