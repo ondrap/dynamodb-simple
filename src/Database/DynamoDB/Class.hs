@@ -26,7 +26,6 @@ module Database.DynamoDB.Class (
     DynamoCollection(..)
   , DynamoTable(..)
   , DynamoIndex(..)
-  , dQueryKey
   , dScan
   , RangeType(..)
   , TableType(..)
@@ -35,7 +34,7 @@ module Database.DynamoDB.Class (
   , gsEncode
   , gsEncodeG
   , PrimaryKey
-  , TableQuery
+  , TableQuery(..)
   , TableScan
   , TableCreate(..)
   , IndexCreate(..)
@@ -82,8 +81,7 @@ class (Generic a, All2 DynamoEncodable (Code a))
 
 class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType) where
   dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey a r
-  dKeyToAttr :: (Code a ~ '[ hash ': range ': xss ])
-            => Proxy a -> PrimaryKey a r -> HMap.HashMap T.Text D.AttributeValue
+  dKeyToAttr :: Proxy a -> PrimaryKey a r -> HMap.HashMap T.Text D.AttributeValue
   dAttrToKey :: Proxy a -> HMap.HashMap T.Text D.AttributeValue -> Maybe (PrimaryKey a r)
 
 instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
@@ -125,38 +123,42 @@ instance (DynamoTable a 'WithRange, Code a ~ '[ hash ': range ': xss ], DynamoSc
   createTable = defaultCreateTableRange
 
 -- | Instance for tables that can be queried
-class DynamoCollection a 'WithRange t => TableQuery a (t :: TableType) where
+class (DynamoCollection a 'WithRange t, HasPrimaryKey a 'WithRange t) => TableQuery a (t :: TableType) hash range | a -> hash range where
   -- | Return table name and index name
   qTableName :: Proxy a -> T.Text
   qIndexName :: Proxy a -> Maybe T.Text
   -- | Create a query using both hash key and operation on range key
   -- On tables without range key, this degrades to queryKey
-  dQueryKey :: (Code a ~ '[ hash ': range ': rest ])
-      => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
+  dQueryKey :: Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
+  dQueryKeyToAttr :: Proxy a -> (hash, range) -> HMap.HashMap T.Text D.AttributeValue
 instance  (DynamoCollection a 'WithRange 'IsTable, DynamoTable a 'WithRange,
-           Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
-    => TableQuery a 'IsTable where
+           Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range,
+           PrimaryKey a 'WithRange ~ (hash, range))
+    => TableQuery a 'IsTable hash range where
   dQueryKey = defaultQueryKey
   qTableName = tableName
   qIndexName _ = Nothing
+  dQueryKeyToAttr = dKeyToAttr
 instance  (DynamoCollection a 'WithRange 'IsIndex, DynamoIndex a parent 'WithRange, DynamoTable parent r1,
-            Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
-        => TableQuery a 'IsIndex where
+            Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range,
+            PrimaryKey a 'WithRange ~ (hash, range))
+        => TableQuery a 'IsIndex hash range where
   dQueryKey = defaultQueryKey
   qTableName _ = tableName (Proxy :: Proxy parent)
   qIndexName = Just . indexName
+  dQueryKeyToAttr = dKeyToAttr
 
-class DynamoCollection a r t => TableScan a (r :: RangeType) (t :: TableType) where
+class (DynamoCollection a r t, HasPrimaryKey a r t) => TableScan a (r :: RangeType) (t :: TableType) where
   -- | Return table name and index name
   qsTableName :: Proxy a -> T.Text
   qsIndexName :: Proxy a -> Maybe T.Text
   dScan :: Proxy a -> D.Scan
-instance DynamoTable a r => TableScan a r 'IsTable where
+instance (DynamoCollection a r 'IsTable, DynamoTable a r) => TableScan a r 'IsTable where
   qsTableName = tableName
   qsIndexName _ = Nothing
   dScan = defaultScan
 instance (DynamoCollection a r 'IsIndex,
-          DynamoIndex a parent r, DynamoTable parent r1) => TableScan a r 'IsIndex where
+          DynamoIndex a parent r, DynamoTable parent r1, HasPrimaryKey a r 'IsIndex) => TableScan a r 'IsIndex where
   qsTableName _ = tableName (Proxy :: Proxy parent)
   qsIndexName = Just . indexName
   dScan = defaultScan
@@ -267,7 +269,7 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash)),
                D.attributeDefinition rangename (dType (Proxy :: Proxy range))]
 
-defaultQueryKey :: (TableQuery a t, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
+defaultQueryKey :: (TableQuery a t hash range, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
     => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 defaultQueryKey p key Nothing =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"

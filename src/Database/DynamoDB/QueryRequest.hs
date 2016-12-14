@@ -96,10 +96,7 @@ queryOpts :: hash -> QueryOpts a hash range
 queryOpts key = QueryOpts key Nothing Nothing Eventually Forward Nothing Nothing
 
 -- | Generate a "D.Query" object
-queryCmd :: forall a t v1 v2 hash range rest.
-    (TableQuery a t, Code a ~ '[ hash ': range ': rest],
-     DynamoScalar v1 hash, DynamoScalar v2 range)
-  => QueryOpts a hash range -> D.Query
+queryCmd :: forall a t hash range. TableQuery a t hash range => QueryOpts a hash range -> D.Query
 queryCmd q =
     dQueryKey (Proxy :: Proxy a) (q ^. qHashKey) (q ^. qRangeCondition)
                   & D.qConsistentRead . consistencyL .~ (q ^. qConsistentRead)
@@ -117,7 +114,7 @@ queryCmd q =
          . (D.qFilterExpression .~ Just expr)
     addStartKey Nothing = id
     addStartKey (Just (key, range)) =
-        D.qExclusiveStartKey .~ dKeyToAttr (Proxy :: Proxy a) (key, range)
+        D.qExclusiveStartKey .~ dQueryKeyToAttr (Proxy :: Proxy a) (key, range)
 
 -- | When https://github.com/brendanhay/amazonka/issues/340 is fixed, remove
 newtype FixedQuery = FixedQuery D.Query
@@ -147,16 +144,15 @@ instance AWSPager FixedScan where
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
-querySource :: forall a t m v1 v2 hash range rest.
-    (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
-     DynamoScalar v1 hash, DynamoScalar v2 range)
+querySource :: forall a t m hash range rest.
+    (TableQuery a t hash range, MonadAWS m, Code a ~ '[ hash ': range ': rest])
   => Proxy a -> QueryOpts a hash range -> Source m a
 querySource _ q = paginate (FixedQuery (queryCmd q)) =$= rsDecode (view D.qrsItems)
 
 -- | Query an index, fetch primary key from the result and immediately read
 -- full items from the main table.
 queryOverIndex :: forall a t m v1 v2 hash hash2 r2 range range2 rest rest2 parent.
-    (TableQuery a t, MonadAWS m,
+    (TableQuery a t hash range, MonadAWS m,
      Code a ~ '[ hash ': range ': rest], Code parent ~ '[ hash2 ': range2 ': rest2 ],
      DynamoIndex a parent 'WithRange, ContainsTableKey a parent (PrimaryKey parent r2),
      DynamoTable parent r2,
@@ -171,13 +167,11 @@ queryOverIndex _ q =
       -- TODO: it would be nice if we could paginate requests from getItemBatch downstraem
       getItemBatch (q ^. qConsistentRead) keys
 
-
 -- | Perform a simple, eventually consistent, query.
 --
 -- Simple to use function to query limited amount of data from database.
-querySimple :: forall a t v1 v2 m hash range rest.
-  (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
-   DynamoScalar v1 hash, DynamoScalar v2 range)
+querySimple :: forall a t m hash range rest.
+  (TableQuery a t hash range, MonadAWS m, Code a ~ '[ hash ': range ': rest])
   => Proxy a -- ^ Proxy type of a table to query
   -> hash        -- ^ Hash key
   -> Maybe (RangeOper range) -- ^ Range condition
@@ -190,9 +184,8 @@ querySimple p key range direction limit = do
   fst <$> query p opts limit
 
 -- | Query with condition
-queryCond :: forall a t v1 v2 m hash range rest.
-  (TableQuery a t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
-   DynamoScalar v1 hash, DynamoScalar v2 range)
+queryCond :: forall a t m hash range rest.
+  (TableQuery a t hash range, MonadAWS m, Code a ~ '[ hash ': range ': rest])
   => Proxy a
   -> hash        -- ^ Hash key
   -> Maybe (RangeOper range) -- ^ Range condition
@@ -209,9 +202,8 @@ queryCond p key range cond direction limit = do
 -- | Fetch exactly the required count of items even when
 -- it means more calls to dynamodb. Return last evaluted key if end of data
 -- was not reached. Use 'qStartKey' to continue reading the query.
-query :: forall a t v1 v2 m range hash rest.
-  (TableQuery a t, DynamoCollection a 'WithRange t, MonadAWS m, Code a ~ '[ hash ': range ': rest],
-   DynamoScalar v1 hash, DynamoScalar v2 range)
+query :: forall a t m range hash rest.
+  (TableQuery a t hash range, MonadAWS m, Code a ~ '[ hash ': range ': rest])
   => Proxy a
   -> QueryOpts a hash range
   -> Int -- ^ Maximum number of items to fetch
@@ -276,14 +268,14 @@ scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
 -- | Conduit source for running a scan.
-scanSource :: (MonadAWS m, TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
+scanSource :: (MonadAWS m, TableScan a r t, Code a ~ '[hash ': range ': xss])
   => Proxy a -> ScanOpts a r -> Source m a
 scanSource _ q = paginate (FixedScan $ scanCmd q) =$= rsDecode (view D.srsItems)
 
 -- | Function to call bounded scans. Tries to return exactly requested number of items.
 --
 -- Use 'sStartKey' to continue the scan.
-scan :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t, HasPrimaryKey a r t)
+scan :: (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t)
   => Proxy a
   -> ScanOpts a r  -- ^ Scan settings
   -> Int  -- ^ Required result count
@@ -299,7 +291,7 @@ scan _ opts limit = do
 
 -- | Generate a "D.Query" object
 scanCmd :: forall a r t hash range xss.
-    (TableScan a r t, HasPrimaryKey a r t, Code a ~ '[hash ': range ': xss])
+    (TableScan a r t, Code a ~ '[hash ': range ': xss])
   => ScanOpts a r -> D.Scan
 scanCmd q =
     dScan (Proxy :: Proxy a)
@@ -330,7 +322,7 @@ scanCmd q =
 --
 -- > scanCond (colAddress <!:> "Home" <.> colCity ==. "London") 10
 scanCond :: forall a m hash range rest r t.
-    (MonadAWS m, HasPrimaryKey a r t, Code a ~ '[ hash ': range ': rest], TableScan a r t)
+    (MonadAWS m, Code a ~ '[ hash ': range ': rest], TableScan a r t)
     => Proxy a -> FilterCondition a -> Int -> m [a]
 scanCond _ cond limit = do
   let opts = scanOpts & sFilterCondition .~ Just cond
