@@ -1,3 +1,10 @@
+# 0.3.0.0
+- API changes regarding position of `Proxy`
+- Added index->table conversion functions
+- Added conduits for left/inner join
+- Added queryOverIndex
+- Simplification of exposed function signatures
+
 # 0.2.0.0
 
 - Changed API to always include a `Proxy`
