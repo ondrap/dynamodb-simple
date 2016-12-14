@@ -85,6 +85,7 @@ data ArticleIndex = ArticleIndex {
   , i_artTitle     :: T.Text
   , i_artAuthor    :: Author
   , i_artTags      :: Set.Set Tag
+  , i_artUuid      :: ArticleUUID
 } deriving (Show)
 
 data AuthorIndex = AuthorIndex {
@@ -92,6 +93,7 @@ data AuthorIndex = AuthorIndex {
   , a_artPublished  :: UTCTime
   , a_artTitle      :: T.Text
   , a_artTags       :: Set.Set Tag
+  , a_artUuid      :: ArticleUUID
 } deriving (Show)
 
 mkTableDefs "migrateTables" (tableConfig (''Article, NoRange)

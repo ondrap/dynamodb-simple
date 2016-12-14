@@ -6,11 +6,13 @@
 module Main where
 
 import           Control.Exception.Safe   (catchAny)
-import           Control.Lens             (set)
+import           Control.Lens             (set, (.~))
 import           Control.Monad            (forM_)
 import           Control.Monad.IO.Class   (MonadIO, liftIO)
 import           Data.Bool                (bool)
 import           Data.Function            ((&))
+import           Data.Conduit             (runConduit, (=$=))
+import qualified Data.Conduit.List        as CL
 import           Data.Monoid              ((<>))
 import           Data.Proxy
 import qualified Data.Set                 as Set
@@ -21,7 +23,7 @@ import           Data.Time.Clock          (NominalDiffTime, addUTCTime,
                                            getCurrentTime)
 import           Data.UUID.V4             (nextRandom)
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB, provisionedThroughput)
+import           Network.AWS.DynamoDB     (dynamoDB)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 
@@ -60,7 +62,7 @@ main = do
         forM_ items (liftIO . print)
 
       withLog "Querying published news articles from Bill Clinton" $ do
-        let condition = (artAuthor' <.> autFirstName' ==. "Bill" &&. artAuthor' <.> autLastName' ==. "Clinton" )
+        let condition = artAuthor' <.> autFirstName' ==. "Bill" &&. artAuthor' <.> autLastName' ==. "Clinton"
         items <- queryCond iArticleIndex (Tagged "News") Nothing condition Backward 10
         forM_ items (liftIO . print)
 
@@ -77,27 +79,33 @@ main = do
         newitem <- updateItemByKey tArticle (tableKey item) (artCoauthor' <.> autGender' =. Female)
         logmsg $ "After update: " <> T.pack (show newitem)
 
-      -- Delete
-
+      -- Query over index
+      withLog "Querying published news articles over index - fetches from main table" $ do
+        let opts = queryOpts (Tagged "News") & qFilterCondition .~ Just (artTags' `setContains` Red)
+        runConduit $
+          queryOverIndex iArticleIndex opts =$= CL.isolate 5 =$= CL.mapM_ (liftIO . print)
 
 logmsg :: MonadIO m => T.Text -> m ()
 logmsg = liftIO . T.putStrLn
 
 genArticles :: forall m. MonadIO m => m [Article]
 genArticles = do
-    authuuid <- Tagged <$> liftIO nextRandom
-    let author1 = Author authuuid "John" "Doe" Male
-        author2 = Author authuuid "Bill" "Clinton" Male
-        author3 = Author authuuid "Barack" "Obama" Male
+    authuuid1 <- Tagged <$> liftIO nextRandom
+    authuuid2 <- Tagged <$> liftIO nextRandom
+    authuuid3 <- Tagged <$> liftIO nextRandom
+    let author1 = Author authuuid1 "John" "Doe" Male
+        author2 = Author authuuid2 "Bill" "Clinton" Male
+        author3 = Author authuuid3 "Barack" "Obama" Male
+        acount = 1000 :: Int
     news <- mapM mkNews $ zip3 (cycle [author1, author2, author3])
                                (cycle [Just author3, Nothing, Just author2, Nothing, Just author1])
-                                (zip [1..(1000 :: Int)] (cycle [Set.singleton Red, Set.singleton Blue,
+                                (zip [1..acount] (cycle [Set.singleton Red, Set.singleton Blue,
                                                         Set.fromList [Red, Green], Set.fromList [Red, Green, Blue]]))
 
 
     comedy <- mapM mkComedy $ zip3 (cycle [author1, author2, author3])
                                (cycle [Just author3, Nothing, Just author2, Nothing, Just author1])
-                                (zip [1..(1000 :: Int)] (cycle [Set.empty, Set.singleton Green,
+                                (zip [1..acount] (cycle [Set.empty, Set.singleton Green,
                                                         Set.fromList [Blue, Green], Set.fromList [Red, Green, Blue]]))
 
     return $ news ++ comedy

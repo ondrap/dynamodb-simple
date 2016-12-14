@@ -281,7 +281,7 @@ tableKey = dTableKey
 --        -- Save data to database
 --        putItem (Test "news" "1-2-3-4" "New subject")
 --        -- Fetch data given primary key
---        item <- getItem Eventually (tTest, ("news", "1-2-3-4"))
+--        item <- getItem Eventually tTest ("news", "1-2-3-4")
 --        liftIO $ print item       -- (item :: Maybe Test)
 --        -- Scan data using filter condition, return 10 results
 --        items <- scanCond tTest (subject' ==. "New subejct") 10
@@ -312,8 +312,8 @@ tableKey = dTableKey
 --   , _subject :: T.Text
 -- } deriving (Show)
 -- data TestIndex = TestIndex {
---     _category :: T.Text
---   , _messageid :: T.Text
+--     i_category :: T.Text
+--   , i_messageid :: T.Text
 -- }
 -- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
 --

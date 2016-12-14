@@ -106,7 +106,7 @@ infix 4 ==.
 -- | > a /= b === Not (a == b)
 (/=.) :: (InCollection col tbl 'FullPath, DynamoEncodable typ)
         => Column typ ctyp col -> typ -> FilterCondition tbl
-(/=.) col val = Not (dcomp "=" col val)
+(/=.) col val = Not (col ==. val)
 infix 4 /=.
 
 
