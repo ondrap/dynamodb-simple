@@ -50,6 +50,7 @@ module Database.DynamoDB (
   , querySimple
   , queryCond
   , querySource
+  , queryOverIndex
     -- * Scan options
   , ScanOpts
   , scanOpts

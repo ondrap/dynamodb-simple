@@ -19,6 +19,7 @@ module Database.DynamoDB.QueryRequest (
   , querySimple
   , queryCond
   , querySource
+  , queryOverIndex
   -- * Scan
   , scan
   , scanCond
@@ -62,6 +63,7 @@ import           Database.DynamoDB.Class
 import           Database.DynamoDB.Filter
 import           Database.DynamoDB.Internal
 import           Database.DynamoDB.Types
+import           Database.DynamoDB.BatchRequest (getItemBatch)
 
 
 -- | Helper function to decode data from the conduit.
@@ -150,6 +152,24 @@ querySource :: forall a t m v1 v2 hash range rest.
      DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> QueryOpts a hash range -> Source m a
 querySource _ q = paginate (FixedQuery (queryCmd q)) =$= rsDecode (view D.qrsItems)
+
+-- | Query an index, fetch primary key from the result and immediately read
+-- full items from the main table.
+queryOverIndex :: forall a t m v1 v2 hash hash2 r1 r2 range range2 rest rest2 parent.
+    (TableQuery a t, MonadAWS m,
+     Code a ~ '[ hash ': range ': rest], Code parent ~ '[ hash2 ': range2 ': rest2 ],
+     DynamoIndex a parent r1, ContainsTableKey a parent (PrimaryKey (Code parent) r2),
+     DynamoTable parent r2, HasPrimaryKey parent r2 'IsTable,
+     DynamoScalar v1 hash, DynamoScalar v2 range)
+  => Proxy a -> QueryOpts a hash range -> Source m parent
+queryOverIndex _ q =
+    paginate (FixedQuery (queryCmd q)) =$= CL.mapFoldableM batchParent
+  where
+    batchParent resp = do
+      (vals :: [a]) <- mapM rsDecoder (resp ^. D.qrsItems)
+      let keys = map dTableKey vals
+      getItemBatch (q ^. qConsistentRead) keys
+
 
 -- | Perform a simple, eventually consistent, query.
 --
