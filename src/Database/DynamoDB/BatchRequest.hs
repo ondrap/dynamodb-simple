@@ -92,7 +92,7 @@ putItemBatch lst = mapM_ go (chunkBatch 25 lst)
 
 -- | Get batch of items.
 getItemBatch :: forall m a r range hash rest.
-    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Consistency -> [PrimaryKey a r] -> m [a]
 getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
   where
@@ -109,7 +109,7 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
           Just res -> return res
           Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
-dDeleteRequest :: (HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': xss ])
+dDeleteRequest :: (DynamoTable a r, Code a ~ '[ hash ': range ': xss ])
           => Proxy a -> PrimaryKey a r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey
 
@@ -118,7 +118,7 @@ dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey
 -- Note: Because the requests are chunked, the information about which items
 -- were deleted in case of exception is unavailable.
 deleteItemBatchByKey :: forall m a r range hash rest.
-    (MonadAWS m, HasPrimaryKey a r 'IsTable, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
+    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
     => Proxy a -> [PrimaryKey a r] -> m ()
 deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
   where
@@ -133,7 +133,7 @@ deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
 --
 -- The 'foreign key' must have an 'Ord' to facilitate faster searching
 leftJoin :: forall a m r hash range rest b.
-    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest],
+    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest],
       Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency
     -> Proxy a -- ^ Proxy type for the right table
@@ -146,7 +146,7 @@ leftJoin consistency _ input = do
 
 -- | Return rows that are present in both tables
 innerJoin :: forall a m r hash range rest b.
-    (MonadAWS m, DynamoTable a r, HasPrimaryKey a r 'IsTable, Code a ~ '[ hash ': range ': rest],
+    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest],
       Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency -> Proxy a -> [(b, PrimaryKey a r)] -> m [(b, a)]
 innerJoin consistency p input = do

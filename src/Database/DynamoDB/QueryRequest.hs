@@ -159,7 +159,7 @@ queryOverIndex :: forall a t m v1 v2 hash hash2 r1 r2 range range2 rest rest2 pa
     (TableQuery a t, MonadAWS m,
      Code a ~ '[ hash ': range ': rest], Code parent ~ '[ hash2 ': range2 ': rest2 ],
      DynamoIndex a parent r1, ContainsTableKey a parent (PrimaryKey parent r2),
-     DynamoTable parent r2, HasPrimaryKey parent r2 'IsTable,
+     DynamoTable parent r2,
      DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> QueryOpts a hash range -> Source m parent
 queryOverIndex _ q =

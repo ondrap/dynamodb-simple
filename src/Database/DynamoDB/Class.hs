@@ -1,11 +1,10 @@
 {-# LANGUAGE CPP                    #-}
 #if __GLASGOW_HASKELL__ >= 800
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}a
 #endif
 {-# OPTIONS_GHC -fno-warn-incomplete-uni-patterns #-}
 -- We have lots of pattern matching for allFieldNames, that is correct because of TH
 {-# LANGUAGE DataKinds              #-}
-{-# LANGUAGE DefaultSignatures      #-}
 {-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -109,7 +108,7 @@ instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
       return (pval, rngval)
 
 -- | Descritpion of dynamo table
-class DynamoCollection a r 'IsTable => DynamoTable a (r :: RangeType) | a -> r where
+class (DynamoCollection a r 'IsTable, HasPrimaryKey a r 'IsTable) => DynamoTable a (r :: RangeType) | a -> r where
   -- | Dynamo table/index name; default is the constructor name
   tableName :: Proxy a -> T.Text
   -- | Serialize data, put it into the database
