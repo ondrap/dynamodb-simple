@@ -29,7 +29,6 @@ import           Data.Maybe                          (mapMaybe)
 import           Data.Monoid                         ((<>))
 import           Data.Proxy
 import qualified Data.Text                           as T
-import           Generics.SOP
 import           Network.AWS
 import qualified Network.AWS.DynamoDB.BatchGetItem   as D
 import qualified Network.AWS.DynamoDB.BatchWriteItem as D
@@ -91,9 +90,7 @@ putItemBatch lst = mapM_ go (chunkBatch 25 lst)
 
 
 -- | Get batch of items.
-getItemBatch :: forall m a r range hash rest.
-    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Consistency -> [PrimaryKey a r] -> m [a]
+getItemBatch :: forall m a r. (MonadAWS m, DynamoTable a r) => Consistency -> [PrimaryKey a r] -> m [a]
 getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
   where
     go keys = do
@@ -105,21 +102,18 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
         tbls <- retryReadBatch cmd
         mapM decoder (tbls ^.. ix tblname . traverse)
     decoder item =
-        case gsDecode item of
+        case dGsDecode item of
           Just res -> return res
           Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
 
-dDeleteRequest :: (DynamoTable a r, Code a ~ '[ hash ': range ': xss ])
-          => Proxy a -> PrimaryKey a r -> D.DeleteRequest
+dDeleteRequest :: DynamoTable a r => Proxy a -> PrimaryKey a r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey
 
 -- | Batch version of 'deleteItemByKey'.
 --
 -- Note: Because the requests are chunked, the information about which items
 -- were deleted in case of exception is unavailable.
-deleteItemBatchByKey :: forall m a r range hash rest.
-    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest])
-    => Proxy a -> [PrimaryKey a r] -> m ()
+deleteItemBatchByKey :: forall m a r. (MonadAWS m, DynamoTable a r) => Proxy a -> [PrimaryKey a r] -> m ()
 deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
   where
     go keys = do
@@ -132,9 +126,8 @@ deleteItemBatchByKey p lst = mapM_ go (chunkBatch 25 lst)
 -- | Return all rows from the left side of the tuple, replace right side by joined data from database.
 --
 -- The 'foreign key' must have an 'Ord' to facilitate faster searching
-leftJoin :: forall a m r hash range rest b.
-    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest],
-      Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
+leftJoin :: forall a b m r.
+    (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency
     -> Proxy a -- ^ Proxy type for the right table
     -> [(b, PrimaryKey a r)]   -- ^ Left table + primary key for the right table
@@ -145,9 +138,8 @@ leftJoin consistency _ input = do
   return $ map (second (`Map.lookup` resultMap)) input
 
 -- | Return rows that are present in both tables
-innerJoin :: forall a m r hash range rest b.
-    (MonadAWS m, DynamoTable a r, Code a ~ '[ hash ': range ': rest],
-      Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
+innerJoin :: forall a m r b.
+    (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency -> Proxy a -> [(b, PrimaryKey a r)] -> m [(b, a)]
 innerJoin consistency p input = do
   res <- leftJoin consistency p input

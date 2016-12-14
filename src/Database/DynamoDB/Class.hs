@@ -18,6 +18,7 @@
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE TypeOperators          #-}
 {-# LANGUAGE UndecidableInstances   #-}
+{-# LANGUAGE DefaultSignatures   #-}
 #if __GLASGOW_HASKELL__ >= 800
 {-# LANGUAGE UndecidableSuperClasses #-}
 #endif
@@ -78,17 +79,22 @@ class (Generic a, All2 DynamoEncodable (Code a))
   => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r t where
   allFieldNames :: Proxy a -> [T.Text]
   primaryFields :: Proxy a -> [T.Text]
+  dGsDecode :: HashMap T.Text AttributeValue -> Maybe a
+  default dGsDecode :: (Code a ~ '[ xs ]) => HashMap T.Text AttributeValue -> Maybe a
+  dGsDecode = gsDecode
 
 class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType) where
-  dItemToKey :: (Code a ~ '[ hash ': range ': xss ]) => a -> PrimaryKey a r
+  dItemToKey :: a -> PrimaryKey a r
   dKeyToAttr :: Proxy a -> PrimaryKey a r -> HMap.HashMap T.Text D.AttributeValue
   dAttrToKey :: Proxy a -> HMap.HashMap T.Text D.AttributeValue -> Maybe (PrimaryKey a r)
+
 
 instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
           DynamoScalar v hash) => HasPrimaryKey a 'NoRange t where
   dItemToKey = gdFirstField
   dKeyToAttr p key = HMap.singleton (head $ allFieldNames p) (dScalarEncode key)
   dAttrToKey p attrs = HMap.lookup (head $ allFieldNames p) attrs >>= dDecode . Just
+
 
 instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
           DynamoScalar v1 hash, DynamoScalar v2 range) => HasPrimaryKey a 'WithRange t where
@@ -269,7 +275,7 @@ defaultCreateTableRange p thr =
     keyDefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash)),
                D.attributeDefinition rangename (dType (Proxy :: Proxy range))]
 
-defaultQueryKey :: (TableQuery a t hash range, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
+defaultQueryKey :: (TableQuery a t hash range, DynamoScalar v1 hash, DynamoScalar v2 range)
     => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 defaultQueryKey p key Nothing =
   D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
