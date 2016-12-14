@@ -184,6 +184,7 @@ class DynamoEncodable a where
   dDecode Nothing = Nothing
   -- | Aid for searching for empty list and hashmap; these can be represented
   -- both by empty list and by missing value, if this returns true, enhance search.
+  -- Also used by joins to weed out empty foreign keys
   dIsMissing :: a -> Bool
   dIsMissing _ = False
 
@@ -230,11 +231,15 @@ instance DynamoEncodable T.Text where
     | Just True <- attr ^. D.avNULL = Just ""
     | otherwise = attr ^. D.avS
   dDecode Nothing = Just ""
+  dIsMissing "" = True
+  dIsMissing _ = False
 instance DynamoEncodable BS.ByteString where
   dEncode "" = Nothing
   dEncode bs = Just (dScalarEncode bs)
   dDecode (Just attr) = attr ^. D.avB
   dDecode Nothing = Just ""
+  dIsMissing "" = True
+  dIsMissing _ = False
 
 -- | 'Maybe' ('Maybe' a) will not work well; it will 'join' the value in the database.
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
@@ -242,6 +247,8 @@ instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode (Just key) = dEncode key
   dDecode Nothing = Just Nothing
   dDecode (Just attr) = Just <$> dDecode (Just attr)
+  dIsMissing Nothing = True
+  dIsMissing _ = False
 instance (Ord a, DynamoScalar v a) => DynamoEncodable (Set.Set a) where
   dEncode (Set.null -> True) = Nothing
   dEncode dta = Just $ dSetEncode dta

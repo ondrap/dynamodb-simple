@@ -44,6 +44,12 @@ data Test = Test {
 } deriving (Show, Eq, Ord)
 mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
 
+data TestSecond = TestSecond {
+    tHashKey :: T.Text
+  , tInt :: Int
+} deriving (Show, Eq)
+mkTableDefs "migrateTest2" (tableConfig (''TestSecond, NoRange) [] [])
+
 withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
 withDb msg code = it msg runcode
   where
@@ -58,6 +64,7 @@ withDb msg code = it msg runcode
       runResourceT $ runAWS newenv $ do
           deleteTable (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
           migrateTest mempty Nothing
+          migrateTest2 mempty Nothing
           code `finally` deleteTable (Proxy :: Proxy Test)
 
 spec :: Spec
@@ -207,11 +214,19 @@ spec = do
 
     withDb "test left join" $ do
         let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
-        let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
+        let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "aaa")
+        let testsecond = TestSecond "aaa" 3
         putItem testitem1
         putItem testitem2
-        res <- leftJoin Strongly tTest [("first", ("1",2)), ("missing", ("1",5))]
-        liftIO $ res `shouldBe` [("first" :: String, Just testitem1), ("missing", Nothing)]
+        putItem testsecond
+        res <- runConduit $ querySourceChunks tTest (queryOpts "1")
+                              =$= leftJoin Strongly tTestSecond (Just . iText)
+                              =$= CL.concat =$= CL.consume
+        liftIO $ res `shouldBe` [(testitem1, Nothing), (testitem2, Just testsecond)]
+        res2 <- runConduit $ querySourceChunks tTest (queryOpts "1")
+                              =$= leftJoin Strongly tTestSecond iMText
+                              =$= CL.concat =$= CL.consume
+        liftIO $ res2 `shouldBe` [(testitem1, Nothing), (testitem2, Just testsecond)]
 
 
 main :: IO ()

@@ -45,6 +45,7 @@ import           Control.Arrow                  (second)
 import           Control.Lens                   (Lens', sequenceOf, view, (%~),
                                                  (.~), (^.), _2)
 import           Control.Lens.TH                (makeLenses)
+import           Control.Monad                  ((>=>))
 import           Control.Monad.Catch            (throwM)
 import           Data.Bool                      (bool)
 import           Data.Coerce                    (coerce)
@@ -252,6 +253,7 @@ boundedFetch startLens rsResult rsLast startcmd limit = do
             newquery = bool (Just (cmd & startLens .~ lastkey)) Nothing (null lastkey)
         return (items, newquery)
 
+-- | Run command as long as Maybe cmd is Just or the resulting sequence is smaller than limit
 unfoldLimit :: Monad m => (cmd -> m (Seq a, Maybe cmd)) -> cmd -> Int -> m (Seq a, Maybe cmd)
 unfoldLimit code = go
   where
@@ -343,22 +345,22 @@ leftJoin :: forall a b m r.
     (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency
     -> Proxy a -- ^ Proxy type for the right table
-    -> (b -> PrimaryKey a r)
+    -> (b -> Maybe (PrimaryKey a r))
     -> Conduit [b] m [(b, Maybe a)]
-leftJoin consistency _ getkey = CL.mapM doJoin
+leftJoin consistency p getkey = CL.mapM doJoin
   where
     doJoin input = do
-      let keys = map getkey input
+      let keys = filter (dKeyIsDefined p) $ mapMaybe getkey input
       rightTbl <- getItemBatch consistency keys
       let resultMap = Map.fromList $ map (\res -> (dTableKey res,res)) rightTbl
-      return $ map (second (`Map.lookup` resultMap)) $ zip input keys
+      return $ map (second (id >=> (`Map.lookup` resultMap))) $ zip input $ map getkey input
 
 -- | The same as 'leftJoin', but discard items that do not exist in the right table
 innerJoin :: forall a b m r.
     (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency
     -> Proxy a -- ^ Proxy type for the right table
-    -> (b -> PrimaryKey a r)
+    -> (b -> Maybe (PrimaryKey a r))
     -> Conduit [b] m [(b, a)]
 innerJoin consistency p getkey =
     leftJoin consistency p getkey =$= CL.map (mapMaybe (sequenceOf _2))

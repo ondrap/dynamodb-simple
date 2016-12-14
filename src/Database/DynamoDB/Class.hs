@@ -87,14 +87,15 @@ class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType
   dItemToKey :: a -> PrimaryKey a r
   dKeyToAttr :: Proxy a -> PrimaryKey a r -> HMap.HashMap T.Text D.AttributeValue
   dAttrToKey :: Proxy a -> HMap.HashMap T.Text D.AttributeValue -> Maybe (PrimaryKey a r)
-
+  -- | Return True if key is well-defined (i.e. no empty string, no Maybe etc.)
+  dKeyIsDefined :: Proxy a -> PrimaryKey a r -> Bool
 
 instance (DynamoCollection a 'NoRange t, Code a ~ '[ hash ': xss ],
           DynamoScalar v hash) => HasPrimaryKey a 'NoRange t where
   dItemToKey = gdFirstField
   dKeyToAttr p key = HMap.singleton (head $ allFieldNames p) (dScalarEncode key)
   dAttrToKey p attrs = HMap.lookup (head $ allFieldNames p) attrs >>= dDecode . Just
-
+  dKeyIsDefined _ = not . dIsMissing
 
 instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
           DynamoScalar v1 hash, DynamoScalar v2 range) => HasPrimaryKey a 'WithRange t where
@@ -110,6 +111,7 @@ instance (DynamoCollection a 'WithRange t, Code a ~ '[ hash ': range ': xss ],
       rngkey <- HMap.lookup rangename attrs
       rngval <- dDecode (Just rngkey)
       return (pval, rngval)
+  dKeyIsDefined _ (hash, range) = not (dIsMissing hash) && not (dIsMissing range)
 
 -- | Descritpion of dynamo table
 class (DynamoCollection a r 'IsTable, HasPrimaryKey a r 'IsTable) => DynamoTable a (r :: RangeType) | a -> r where
