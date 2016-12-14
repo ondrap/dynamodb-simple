@@ -92,8 +92,8 @@ defaultTranslate = translate
 --
 -- Example of what gets created:
 --
--- > data Test { first :: Text, second :: Text, third :: Int }
--- > data TestIndex { third :: Int, second :: T.Text}
+-- > data Test { _first :: Text, _second :: Text, _third :: Int }
+-- > data TestIndex { u_third :: Int, i_second :: T.Text}
 -- >
 -- > mkTableDefs (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
 -- >
@@ -116,6 +116,11 @@ defaultTranslate = translate
 -- > instance InCollection P_Second TestIndex 'FullPath -- For every non-primary attribute
 -- > first' :: Column Text TypColumn P_First
 -- > first' = Column
+-- > -- Polymorphic lenses
+-- > class Test_lens_first a b | a -> b where
+-- >    first :: Functor f => (a -> f b) -> a -> f b
+-- > instance Test_lens_first TestIndex Text where
+-- >    first = ...
 mkTableDefs ::
     String -- ^ Name of the migration function
   -> TableConfig
