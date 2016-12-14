@@ -147,7 +147,7 @@ instance AWSPager FixedScan where
       lastkey = resp ^. D.srsLastEvaluatedKey
 
 
--- | Same as 'querySource', but return data in original chunks
+-- | Same as 'querySource', but return data in original chunks.
 querySourceChunks :: forall a t m hash range. (CanQuery a t hash range, MonadAWS m)
   => Proxy a -> QueryOpts a hash range -> Source m [a]
 querySourceChunks _ q = paginate (FixedQuery (queryCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
@@ -277,7 +277,7 @@ makeLenses ''ScanOpts
 scanOpts :: ScanOpts a r
 scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
--- | Conduit source for running scan; the same as 'scanSource', but return results in chunks as they come
+-- | Conduit source for running scan; the same as 'scanSource', but return results in chunks as they come.
 scanSourceChunks :: (MonadAWS m, TableScan a r t) => Proxy a -> ScanOpts a r -> Source m [a]
 scanSourceChunks _ q = paginate (FixedScan (scanCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.srsItems))
 
@@ -302,7 +302,7 @@ scan _ opts limit = do
       | Nothing <- opts ^. sLimit, Nothing <- opts ^. sFilterCondition = sLimit .~ Just (fromIntegral limit)
       | otherwise = id
 
--- | Generate a "D.Query" object
+-- | Generate a "D.Query" object.
 scanCmd :: forall a r t. TableScan a r t => ScanOpts a r -> D.Scan
 scanCmd q =
     dScan (Proxy :: Proxy a)
@@ -338,9 +338,9 @@ scanCond _ cond limit = do
       cmd = scanCmd opts
   fst <$> boundedFetch D.sExclusiveStartKey (view D.srsItems) (view D.srsLastEvaluatedKey) cmd limit
 
--- | Conduit to do a left join on the items being sent; supposed to be used with querySourceChunks
+-- | Conduit to do a left join on the items being sent; supposed to be used with querySourceChunks.
 --
--- The 'foreign key' must have an 'Ord' to facilitate faster searching
+-- The 'foreign key' must have an 'Ord' to facilitate faster searching.
 leftJoin :: forall a b m r.
     (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency
@@ -355,7 +355,7 @@ leftJoin consistency p getkey = CL.mapM doJoin
       let resultMap = Map.fromList $ map (\res -> (dTableKey res,res)) rightTbl
       return $ map (second (id >=> (`Map.lookup` resultMap))) $ zip input $ map getkey input
 
--- | The same as 'leftJoin', but discard items that do not exist in the right table
+-- | The same as 'leftJoin', but discard items that do not exist in the right table.
 innerJoin :: forall a b m r.
     (MonadAWS m, DynamoTable a r, Ord (PrimaryKey a r), ContainsTableKey a a (PrimaryKey a r))
     => Consistency

@@ -192,7 +192,7 @@ dUpdateItem p pkey actions mcond =
 
 -- | Update item in a table.
 --
--- > updateItem (Proxy :: Proxy Test) (12, "2") [colCount +=. 100]
+-- > updateItem (Proxy :: Proxy Test) (12, "2") (colCount +=. 100)
 updateItemByKey_ :: forall a m r.
       (MonadAWS m, DynamoTable a r) => Proxy a -> PrimaryKey a r -> Action a -> m ()
 updateItemByKey_ p pkey actions

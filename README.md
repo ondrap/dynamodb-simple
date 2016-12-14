@@ -56,7 +56,9 @@ test = do
   queries when searching for these empty values.
 - Compatible with GHC8 `DuplicateRecordFields`
 - Customizable table and index names. Custom translation of field names to attribute names.
-- Streaming settings.
+- AWS Dynamo streaming settings.
+- Utilities to help with simulated joins or retriving original data from index.
+- Both conduit and page-based API.
 
 ### What is planned
 
