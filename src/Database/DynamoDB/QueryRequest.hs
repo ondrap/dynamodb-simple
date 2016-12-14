@@ -168,6 +168,7 @@ queryOverIndex _ q =
     batchParent resp = do
       (vals :: [a]) <- mapM rsDecoder (resp ^. D.qrsItems)
       let keys = map dTableKey vals
+      -- TODO: it would be nice if we could paginate requests from getItemBatch downstraem
       getItemBatch (q ^. qConsistentRead) keys
 
 

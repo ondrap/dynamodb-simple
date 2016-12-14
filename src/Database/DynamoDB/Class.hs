@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP                    #-}
 #if __GLASGOW_HASKELL__ >= 800
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}a
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 #endif
 {-# OPTIONS_GHC -fno-warn-incomplete-uni-patterns #-}
 -- We have lots of pattern matching for allFieldNames, that is correct because of TH
