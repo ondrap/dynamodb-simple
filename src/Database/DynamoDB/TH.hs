@@ -131,7 +131,7 @@ mkTableDefs migname TableConfig{..} =
 
     tblFieldNames <- getFieldNames table translateField
     buildColData tblFieldNames
-    genBaseCollection table tblrange tblname Nothing translateField
+    genBaseCollection table tblrange tblname Nothing translateField False
 
     -- Check, that hash key name in locindexes == hash key in primary table
     let tblHashName = fst (head tblFieldNames)
@@ -142,9 +142,10 @@ mkTableDefs migname TableConfig{..} =
                   <> " is not equal to table hash key " <> show tblHashName)
 
     -- Instances for indices
-    let allindexes = globalIndexes ++ map (\(idx,name) -> (idx, WithRange, name)) localIndexes
-    forM_ allindexes $ \(idx, idxrange, idxname) -> do
-        genBaseCollection idx idxrange idxname (Just table) translateField
+    let allindexes = map (\(idx, idxrange, idxname) -> (idx, idxrange, idxname, False)) globalIndexes
+                    ++ map (\(idx,name) -> (idx, WithRange, name, True)) localIndexes
+    forM_ allindexes $ \(idx, idxrange, idxname, islocal) -> do
+        genBaseCollection idx idxrange idxname (Just table) translateField islocal
         -- Check that all records from indices conform to main table and create instances
         instfields <- getFieldNames idx translateField
         let pkeytable = [True | _ <- [1..(pkeySize idxrange)] ] ++ repeat False
@@ -180,8 +181,8 @@ pkeySize WithRange = 2
 pkeySize NoRange = 1
 
 -- | Generate basic collection instances
-genBaseCollection :: Name -> RangeType -> String -> Maybe Name -> (String -> String) -> WriterT [Dec] Q ()
-genBaseCollection coll collrange tblname mparent translate = do
+genBaseCollection :: Name -> RangeType -> String -> Maybe Name -> (String -> String) -> Bool -> WriterT [Dec] Q ()
+genBaseCollection coll collrange tblname mparent translate isLocal = do
     tblFieldNames <- getFieldNames coll translate
     let fieldNames = map fst tblFieldNames
     let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL) fieldNames)
@@ -210,6 +211,7 @@ genBaseCollection coll collrange tblname mparent translate = do
         lift [d|
             instance DynamoIndex $(conT coll) $(conT parent) $(conT $ mrange collrange) where
                 indexName _ = $(appE (varE 'T.pack) (litE (StringL tblname)))
+                indexIsLocal _ = $(conE (if isLocal then 'True  else 'False))
               |] >>= tell
 
     -- Skip primary key, we cannot filter by it

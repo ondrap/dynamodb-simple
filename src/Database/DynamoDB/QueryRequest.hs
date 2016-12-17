@@ -161,6 +161,10 @@ querySource p q = querySourceChunks p q =$= CL.concat
 
 -- | Query an index, fetch primary key from the result and immediately read
 -- full items from the main table.
+--
+-- You cannot perform strongly consistent reads on Global indexes; if you set
+-- the 'qConsistentRead' to 'Strongly', fetch from global indexes is still done
+-- as eventually consistent. Queries on local indexes are performed according to the settings.
 queryOverIndex :: forall a t m v1 v2 hash r2 range rest parent.
     (CanQuery a t hash range, MonadAWS m,
      Code a ~ '[ hash ': range ': rest],
@@ -169,12 +173,13 @@ queryOverIndex :: forall a t m v1 v2 hash r2 range rest parent.
      DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> QueryOpts a hash range -> Source m parent
 queryOverIndex p q =
-   querySourceChunks p q =$= CL.mapFoldableM batchParent
+   querySourceChunks p (q & setConsistency)
+      =$= CL.mapFoldableM batchParent
   where
-    batchParent vals = do
-      let keys = map dTableKey vals
-      -- TODO: it would be nice if we could paginate requests from getItemBatch downstraem
-      getItemBatch (q ^. qConsistentRead) keys
+    setConsistency -- Strong consistent reads not supported on global indexes
+      | indexIsLocal p = id
+      | otherwise = qConsistentRead .~ Eventually
+    batchParent vals = getItemBatch (q ^. qConsistentRead) (map dTableKey vals)
 
 -- | Perform a simple, eventually consistent, query.
 --

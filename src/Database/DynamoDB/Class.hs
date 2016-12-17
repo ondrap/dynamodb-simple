@@ -182,6 +182,7 @@ type family PrimaryKey' (a :: [[*]]) (r :: RangeType) :: * where
 -- | Class representing a Global Secondary Index
 class DynamoCollection a r 'IsIndex => DynamoIndex a parent (r :: RangeType) | a -> parent r where
   indexName :: Proxy a -> T.Text
+  indexIsLocal :: Proxy a -> Bool
 
 class DynamoIndex a parent r => IndexCreate a parent (r :: RangeType) where
   createGlobalIndex ::
