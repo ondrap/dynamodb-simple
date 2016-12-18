@@ -42,13 +42,13 @@ data Test = Test {
   , iInt      :: Int
   , iMText    :: Maybe T.Text
 } deriving (Show, Eq, Ord)
-mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
+mkTableDefs "migrateTest" (tableConfig "" (''Test, WithRange) [] [])
 
 data TestSecond = TestSecond {
     tHashKey :: T.Text
   , tInt :: Int
 } deriving (Show, Eq)
-mkTableDefs "migrateTest2" (tableConfig (''TestSecond, NoRange) [] [])
+mkTableDefs "migrateTest2" (tableConfig "" (''TestSecond, NoRange) [] [])
 
 withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
 withDb msg code = it msg runcode

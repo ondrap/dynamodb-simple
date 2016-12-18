@@ -64,15 +64,16 @@ data TableConfig = TableConfig {
 
 -- | Simple table configuration
 tableConfig ::
-     (Name, RangeType)   -- ^ Table type name, primary key type
+     String -- ^ Prefix for table and index names; dynamodb doesn't have namespaces, this is to remedy the problem.
+  -> (Name, RangeType)   -- ^ Table type name, primary key type
   -> [(Name, RangeType)] -- ^ Global secondary index records, index key type
   -> [Name] -- ^ Local secondary index records
   -> TableConfig
-tableConfig (table, tbltype) globidx locidx =
+tableConfig prefix (table, tbltype) globidx locidx =
     TableConfig {
-        tableSetup = (table, tbltype, nameToStr table)
-      , globalIndexes = map (\(n,r) -> (n, r, nameToStr n)) globidx
-      , localIndexes = map (\n -> (n, nameToStr n)) locidx
+        tableSetup = (table, tbltype, prefix ++ nameToStr table)
+      , globalIndexes = map (\(n,r) -> (n, r, prefix ++ nameToStr n)) globidx
+      , localIndexes = map (\n -> (n, prefix ++ nameToStr n)) locidx
       , translateField = defaultTranslate
       , buildLens = True
     }
@@ -95,7 +96,7 @@ defaultTranslate = translate
 -- > data Test { _first :: Text, _second :: Text, _third :: Int }
 -- > data TestIndex { u_third :: Int, i_second :: T.Text}
 -- >
--- > mkTableDefs (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
+-- > mkTableDefs (tableConfig "" (''Test, WithRange) [(''TestIndex, NoRange)] [])
 -- >
 -- > deriveGenericOnly ''Test
 -- > instance DynamoCollection Test WithRange IsTable

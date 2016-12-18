@@ -15,7 +15,7 @@ data Test = Test {
   , replies  :: Int
 } deriving (Show)
 -- Generate instances and category', user' etc. variables for queries/updates
-mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
+mkTableDefs "migrate" (tableConfig "" (''Test, WithRange) [] [])
 
 test :: IO ()
 test = do

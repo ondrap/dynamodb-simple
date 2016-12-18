@@ -260,7 +260,7 @@ tableKey = dTableKey
 --   , messageid :: T.Text
 --   , subject :: T.Text
 -- } deriving (Show)
--- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [] [])
+-- mkTableDefs "migrate" (tableConfig "" (''Test, WithRange) [] [])
 -- @
 --
 -- This code creates appropriate instances for the table and the columns. It creates
@@ -315,7 +315,7 @@ tableKey = dTableKey
 --     i_category :: T.Text
 --   , i_messageid :: T.Text
 -- }
--- mkTableDefs "migrate" (tableConfig (''Test, WithRange) [(''TestIndex, NoRange)] [])
+-- mkTableDefs "migrate" (tableConfig "" (''Test, WithRange) [(''TestIndex, NoRange)] [])
 --
 -- doWithTest :: Test -> ...
 -- doWithTest item = (item ^. category) ...

@@ -55,7 +55,7 @@ data Test = Test {
   , _iList     :: [Inner]
   , _iMap      :: HashMap Name Inner
 } deriving (Show, Eq)
-mkTableDefs "migrateTest" (tableConfig (''Test, WithRange) [] [])
+mkTableDefs "migrateTest" (tableConfig "" (''Test, WithRange) [] [])
 
 withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
 withDb msg code = it msg runcode

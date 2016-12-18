@@ -96,6 +96,6 @@ data AuthorIndex = AuthorIndex {
   , a_artUuid      :: ArticleUUID
 } deriving (Show)
 
-mkTableDefs "migrateTables" (tableConfig (''Article, NoRange)
+mkTableDefs "migrateTables" (tableConfig "" (''Article, NoRange)
                                          [(''ArticleIndex, WithRange), (''AuthorIndex, WithRange)]
                                          [])
