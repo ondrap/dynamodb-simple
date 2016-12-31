@@ -1,3 +1,7 @@
+# 0.4.0.0
+- Slightly changed TH API to allow table prefixing
+- Better consistency settings detection for queryOverIndex
+
 # 0.3.0.0
 - API changes regarding position of `Proxy`
 - Added index->table conversion functions
