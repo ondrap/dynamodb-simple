@@ -310,7 +310,7 @@ scan _ opts limit = do
 -- | Generate a "D.Query" object.
 scanCmd :: forall a r t. TableScan a r t => ScanOpts a r -> D.Scan
 scanCmd q =
-    dScan (Proxy :: Proxy a)
+    defaultScan (Proxy :: Proxy a)
         & D.sConsistentRead . consistencyL .~ (q ^. sConsistentRead)
         & D.sLimit .~ (q ^. sLimit)
         & addStartKey (q ^. sStartKey)

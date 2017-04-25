@@ -243,6 +243,7 @@ createOrMigrate tabledef = do
       Left _ -> do
           logmsg Info ("Creating table: " <> prettyTableInfo tabledef)
           void $ send tabledef -- table doesn't exist, create a new one
+          waitUntilTableActive tblname True
       Right rs
         | Just descr <- rs ^. D.drsTable -> do
             logmsg Info ("Table " <> tblname <> " alread exists, checking schema.")

@@ -27,7 +27,7 @@ module Database.DynamoDB.Class (
     DynamoCollection(..)
   , DynamoTable(..)
   , DynamoIndex(..)
-  , dScan
+  , defaultScan
   , RangeType(..)
   , TableType(..)
   , gsDecode
@@ -161,16 +161,13 @@ class (DynamoCollection a r t, HasPrimaryKey a r t) => TableScan a (r :: RangeTy
   -- | Return table name and index name
   qsTableName :: Proxy a -> T.Text
   qsIndexName :: Proxy a -> Maybe T.Text
-  dScan :: Proxy a -> D.Scan
 instance (DynamoCollection a r 'IsTable, DynamoTable a r) => TableScan a r 'IsTable where
   qsTableName = tableName
   qsIndexName _ = Nothing
-  dScan = defaultScan
 instance (DynamoCollection a r 'IsIndex,
           DynamoIndex a parent r, DynamoTable parent r1, HasPrimaryKey a r 'IsIndex) => TableScan a r 'IsIndex where
   qsTableName _ = tableName (Proxy :: Proxy parent)
   qsIndexName = Just . indexName
-  dScan = defaultScan
 
 -- | Type family that returns a primary key of a table/index depending on the 'RangeType' parameter.
 type PrimaryKey a r = PrimaryKey' (Code a) r
