@@ -21,6 +21,7 @@ module Database.DynamoDB.QueryRequest (
   , querySource
   , querySourceChunks
   , queryOverIndex
+  , querySourceByKey
   -- * Scan
   , scan
   , scanCond
@@ -40,8 +41,7 @@ module Database.DynamoDB.QueryRequest (
 ) where
 
 
-import           Control.Arrow                  (first)
-import           Control.Arrow                  (second)
+import           Control.Arrow                  (first, second)
 import           Control.Lens                   (Lens', sequenceOf, view, (%~),
                                                  (.~), (^.), _2)
 import           Control.Lens.TH                (makeLenses)
@@ -68,6 +68,7 @@ import qualified Network.AWS.DynamoDB.Scan      as D
 import qualified Network.AWS.DynamoDB.Types     as D
 import           Network.AWS.Pager              (AWSPager (..))
 import           Numeric.Natural                (Natural)
+import qualified Data.HashMap.Strict as HMap
 
 import           Database.DynamoDB.BatchRequest (getItemBatch)
 import           Database.DynamoDB.Class
@@ -152,12 +153,31 @@ querySourceChunks :: forall a t m hash range. (CanQuery a t hash range, MonadAWS
   => Proxy a -> QueryOpts a hash range -> Source m [a]
 querySourceChunks _ q = paginate (FixedQuery (queryCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
 
-
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
 querySource :: forall a t m hash range. (CanQuery a t hash range, MonadAWS m)
   => Proxy a -> QueryOpts a hash range -> Source m a
 querySource p q = querySourceChunks p q =$= CL.concat
+
+
+querySourceChunksByKey :: forall a parent hash rest v1 m r.
+  (DynamoIndex a parent 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v1 hash, MonadAWS m,
+   DynamoTable parent r)
+  => Proxy a -> hash -> Source m [a]
+querySourceChunksByKey p key = paginate (FixedQuery sQuery) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
+  where
+    sQuery = D.query (tableName (Proxy :: Proxy parent))
+                                   & D.qKeyConditionExpression .~ Just "#K = :key"
+                                   & D.qExpressionAttributeNames .~ HMap.singleton "#K" (head (allFieldNames p))
+                                   & D.qExpressionAttributeValues .~ HMap.singleton ":key" (dScalarEncode key)
+                                   & D.qIndexName .~ (Just $ indexName p)
+
+-- | Conduit to query global indexes with no range key; in case anyone needed it
+querySourceByKey :: forall a parent hash rest v1 m r.
+  (DynamoIndex a parent 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v1 hash, MonadAWS m,
+   DynamoTable parent r)
+  => Proxy a -> hash -> Source m a
+querySourceByKey p q = querySourceChunksByKey p q =$= CL.concat
 
 -- | Query an index, fetch primary key from the result and immediately read
 -- full items from the main table.

@@ -49,6 +49,7 @@ module Database.DynamoDB (
   , queryCond
   , querySource
   , querySourceChunks
+  , querySourceByKey
   , queryOverIndex
     -- * Scan options
   , ScanOpts

@@ -42,7 +42,12 @@ data Test = Test {
   , iInt      :: Int
   , iMText    :: Maybe T.Text
 } deriving (Show, Eq, Ord)
-mkTableDefs "migrateTest" (tableConfig "" (''Test, WithRange) [] [])
+
+data TestKeyOnly = TestKeyOnly {
+    d_iText :: T.Text
+  , d_iHashKey  :: T.Text
+}
+mkTableDefs "migrateTest" (tableConfig "" (''Test, WithRange) [(''TestKeyOnly, NoRange)] [])
 
 data TestSecond = TestSecond {
     tHashKey :: T.Text
@@ -158,6 +163,13 @@ spec = do
         putItemBatch newItems
         (items :: [Test]) <- queryCond tTest "hashkey" Nothing (iInt' >. 50) Backward (-1)
         liftIO $ items `shouldBe` []
+    withDb "querySourceByKey works/compiles correctly" $ do
+      let template i = Test "hashkey" i "text" False 3.14 i Nothing
+          newItems = map template [1..55]
+      putItemBatch newItems
+      res <- runConduit $ querySourceByKey iTestKeyOnly "text" =$= CL.consume
+      liftIO $ length res `shouldBe` 55
+
     withDb "updateItemByKey works" $ do
         let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
         putItem testitem1
@@ -227,7 +239,6 @@ spec = do
                               =$= leftJoin Strongly tTestSecond iMText
                               =$= CL.concat =$= CL.consume
         liftIO $ res2 `shouldBe` [(testitem1, Nothing), (testitem2, Just testsecond)]
-
 
 main :: IO ()
 main = hspec spec
