@@ -60,6 +60,9 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
 import Data.Int (Int16, Int32, Int64)
+import           Data.Time.Clock            (UTCTime)
+import           Data.Time.Clock.POSIX      (POSIXTime, posixSecondsToUTCTime,
+                                             utcTimeToPOSIXSeconds)
 
 
 -- | Exceptions thrown by some dynamodb-simple actions.
@@ -170,6 +173,10 @@ instance DynamoScalar 'D.B BS.ByteString where
   scalarEncode = ScB
   scalarDecode (ScB bs) = Just bs
 
+instance DynamoScalar 'D.N UTCTime where
+  scalarEncode time = ScN (fromIntegral (truncate (utcTimeToPOSIXSeconds time) :: Int))
+  scalarDecode (ScN num)= toBoundedInteger num >>= pure . posixSecondsToUTCTime . (fromIntegral :: Int -> POSIXTime)
+
 -- | Typeclass showing that this datatype can be saved to DynamoDB.
 class DynamoEncodable a where
   -- | Encode data. Return 'Nothing' if attribute should be omitted.
@@ -240,6 +247,9 @@ instance DynamoEncodable BS.ByteString where
   dDecode Nothing = Just ""
   dIsMissing "" = True
   dIsMissing _ = False
+instance DynamoEncodable UTCTime where
+  dEncode time = dEncode (truncate (utcTimeToPOSIXSeconds time) :: Int)
+  dDecode attr = dDecode attr >>= pure . posixSecondsToUTCTime . (fromIntegral :: Int -> POSIXTime)
 
 -- | 'Maybe' ('Maybe' a) will not work well; it will 'join' the value in the database.
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
