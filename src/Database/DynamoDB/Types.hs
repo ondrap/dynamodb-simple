@@ -36,6 +36,7 @@ module Database.DynamoDB.Types (
 import           Control.Exception           (Exception)
 import           Control.Lens                ((.~), (^.))
 import qualified Data.Aeson                  as AE
+import qualified Data.Aeson.Types            as AT
 import qualified Data.ByteString             as BS
 import           Data.ByteString.Lazy        (toStrict)
 import           Data.Double.Conversion.Text (toShortest)
@@ -60,9 +61,7 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
 import Data.Int (Int16, Int32, Int64)
-import           Data.Time.Clock            (UTCTime)
-import           Data.Time.Clock.POSIX      (POSIXTime, posixSecondsToUTCTime,
-                                             utcTimeToPOSIXSeconds)
+import           Data.Time.Clock             (UTCTime)
 
 
 -- | Exceptions thrown by some dynamodb-simple actions.
@@ -173,9 +172,12 @@ instance DynamoScalar 'D.B BS.ByteString where
   scalarEncode = ScB
   scalarDecode (ScB bs) = Just bs
 
-instance DynamoScalar 'D.N UTCTime where
-  scalarEncode time = ScN (fromIntegral (truncate (utcTimeToPOSIXSeconds time) :: Int))
-  scalarDecode (ScN num)= toBoundedInteger num >>= pure . posixSecondsToUTCTime . (fromIntegral :: Int -> POSIXTime)
+instance DynamoScalar 'D.S UTCTime where
+  scalarEncode time =
+    case AE.toJSON time of
+        AE.String str -> ScS str
+        _ -> error "Aeson toJSON didn't return a string for UTCTime"
+  scalarDecode (ScS txt) = AT.parseMaybe AE.parseJSON (AE.String txt)
 
 -- | Typeclass showing that this datatype can be saved to DynamoDB.
 class DynamoEncodable a where
@@ -248,8 +250,13 @@ instance DynamoEncodable BS.ByteString where
   dIsMissing "" = True
   dIsMissing _ = False
 instance DynamoEncodable UTCTime where
-  dEncode time = dEncode (truncate (utcTimeToPOSIXSeconds time) :: Int)
-  dDecode attr = dDecode attr >>= pure . posixSecondsToUTCTime . (fromIntegral :: Int -> POSIXTime)
+  dEncode time =
+    case AE.toJSON time of
+        AE.String str -> dEncode str
+        _ -> error "Aeson toJSON didn't return a string for UTCTime"
+  dDecode attr = do
+      txt <- dDecode attr
+      scalarDecode (ScS txt)
 
 -- | 'Maybe' ('Maybe' a) will not work well; it will 'join' the value in the database.
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
