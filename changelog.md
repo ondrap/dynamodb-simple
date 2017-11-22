@@ -1,3 +1,7 @@
+# 0.5.0.0
+
+- Added UUID DynamoEncodable instance
+
 # 0.4.0.1
 
 - Fixed default signatures to compile with GHC 8.2
