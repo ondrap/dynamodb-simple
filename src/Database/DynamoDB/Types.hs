@@ -114,11 +114,11 @@ dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.from
 class ScalarAuto v => DynamoScalar (v :: D.ScalarAttributeType) a | a -> v where
   -- | Scalars must have total encoding function
   scalarEncode :: a -> ScalarValue v
-  default scalarEncode :: (Show a, Read a) => a -> ScalarValue 'D.S
+  default scalarEncode :: (Show a, Read a, v ~ 'D.S) => a -> ScalarValue v
   scalarEncode = ScS . T.pack . show
 
   scalarDecode :: ScalarValue v -> Maybe a
-  default scalarDecode :: (Show a, Read a) => ScalarValue 'D.S -> Maybe a
+  default scalarDecode :: (Show a, Read a, v ~ 'D.S) => ScalarValue v -> Maybe a
   scalarDecode (ScS txt) = readMaybe (T.unpack txt)
 
 instance DynamoScalar 'D.N Integer where
