@@ -46,6 +46,8 @@ import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
 import           Data.Maybe                  (mapMaybe)
 import           Data.Proxy
+import           Data.UUID.Types             (UUID)
+import qualified Data.UUID.Types             as UUID
 import           Data.Scientific             (Scientific, floatingOrInteger,
                                               fromFloatDigits, toBoundedInteger,
                                               toRealFloat)
@@ -240,6 +242,14 @@ instance DynamoEncodable BS.ByteString where
   dDecode Nothing = Just ""
   dIsMissing "" = True
   dIsMissing _ = False
+
+
+instance DynamoEncodable UUID where
+  dEncode uuid = dEncode (UUID.toText uuid)
+  dDecode attr = attr >>= dDecode . Just >>= UUID.fromText
+instance DynamoScalar 'D.S UUID where
+  scalarEncode = ScS . UUID.toText
+  scalarDecode (ScS txt) = UUID.fromText txt
 
 -- | 'Maybe' ('Maybe' a) will not work well; it will 'join' the value in the database.
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where

@@ -24,13 +24,6 @@ import           Database.DynamoDB.TH
 import           Database.DynamoDB.Types
 
 -- Haskell datatype instances
-instance DynamoEncodable UUID where
-  dEncode uuid = dEncode (UUID.toText uuid)
-  dDecode attr = attr >>= dDecode . Just >>= UUID.fromText
-instance DynamoScalar 'D.S UUID where
-  scalarEncode = ScS . UUID.toText
-  scalarDecode (ScS txt) = UUID.fromText txt
-
 instance DynamoEncodable UTCTime where
   dEncode time = dEncode (truncate (utcTimeToPOSIXSeconds time) :: Int)
   dDecode attr = dDecode attr >>= pure . posixSecondsToUTCTime . (fromIntegral :: Int -> POSIXTime)
