@@ -98,8 +98,8 @@ getItemBatch consistency lst = concat <$> mapM go (chunkBatch 100 lst)
         mapM decoder (tbls ^.. ix tblname . traverse)
     decoder item =
         case dGsDecode item of
-          Just res -> return res
-          Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
+          Right res -> return res
+          Left err -> throwM (DynamoException $ "Error decoding item: " <> err )
 
 dDeleteRequest :: DynamoTable a r => Proxy a -> PrimaryKey a r -> D.DeleteRequest
 dDeleteRequest p pkey = D.deleteRequest & D.drKey .~ dKeyToAttr p pkey

@@ -36,6 +36,7 @@ module Database.DynamoDB.Types (
 import           Control.Exception           (Exception)
 import           Control.Lens                ((.~), (^.))
 import qualified Data.Aeson                  as AE
+import           Data.Bifunctor (first)
 import qualified Data.ByteString             as BS
 import           Data.ByteString.Lazy        (toStrict)
 import           Data.Double.Conversion.Text (toShortest)
@@ -60,7 +61,7 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
-import           Text.Read                   (readMaybe)
+import           Text.Read                   (readMaybe, readEither)
 import Data.Int (Int16, Int32, Int64)
 
 
@@ -184,6 +185,7 @@ class DynamoEncodable a where
   default dDecode :: (Show a, Read a) => Maybe AttributeValue -> Maybe a
   dDecode (Just attr) = attr ^. D.avS >>= (readMaybe . T.unpack)
   dDecode Nothing = Nothing
+
   -- | Aid for searching for empty list and hashmap; these can be represented
   -- both by empty list and by missing value, if this returns true, enhance search.
   -- Also used by joins to weed out empty foreign keys

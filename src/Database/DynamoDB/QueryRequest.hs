@@ -81,8 +81,8 @@ rsDecoder :: (MonadAWS m, DynamoCollection a r t)
     => HashMap T.Text D.AttributeValue -> m a
 rsDecoder item =
   case dGsDecode item of
-    Just res -> return res
-    Nothing -> throwM (DynamoException $ "Error decoding item: " <> T.pack (show item))
+    Right res -> return res
+    Left err -> throwM (DynamoException $ "Error decoding item: " <> err)
 
 -- | Options for a generic query.
 data QueryOpts a hash range = QueryOpts {

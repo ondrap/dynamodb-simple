@@ -14,7 +14,6 @@
 {-# LANGUAGE PolyKinds              #-}
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
-{-# LANGUAGE TupleSections          #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE TypeOperators          #-}
 {-# LANGUAGE UndecidableInstances   #-}
@@ -79,8 +78,8 @@ class (Generic a, All2 DynamoEncodable (Code a))
   => DynamoCollection a (r :: RangeType) (t :: TableType) | a -> r t where
   allFieldNames :: Proxy a -> [T.Text]
   primaryFields :: Proxy a -> [T.Text]
-  dGsDecode :: HashMap T.Text AttributeValue -> Maybe a
-  default dGsDecode :: (Code a ~ '[ xs ]) => HashMap T.Text AttributeValue -> Maybe a
+  dGsDecode :: HashMap T.Text AttributeValue -> Either T.Text a
+  default dGsDecode :: (Code a ~ '[ xs ]) => HashMap T.Text AttributeValue -> Either T.Text a
   dGsDecode = gsDecode
 
 class DynamoCollection a r t => HasPrimaryKey a (r :: RangeType) (t :: TableType) where
@@ -235,19 +234,22 @@ gsEncodeG names a = HMap.fromList $ mapMaybe (sequenceOf _2) $ zip names (gsEnco
 
 
 gsDecode :: forall a r t xs. (DynamoCollection a r t, Code a ~ '[ xs ])
-  => HashMap T.Text AttributeValue -> Maybe a
+  => HashMap T.Text AttributeValue -> Either T.Text a
 gsDecode = gsDecodeG (allFieldNames (Proxy :: Proxy a))
 
 -- | Decode hashmap to a record using generic-sop.
 gsDecodeG ::
     forall a xs. (Generic a,  All2 DynamoEncodable (Code a), Code a ~ '[ xs ])
-  => [T.Text] -> HMap.HashMap T.Text AttributeValue -> Maybe a
+  => [T.Text] -> HMap.HashMap T.Text AttributeValue -> Either T.Text a
 gsDecodeG names attrs =
-    let Just vals = fromList $ map (`HMap.lookup` attrs) names
-    in to . SOP . Z <$> hsequence (hcliftA dproxy (dDecode . unK) vals)
+    let Just pairs = fromList $ map (\k -> (k, k `HMap.lookup` attrs)) names
+    in to . SOP . Z <$> hsequence (hcliftA dproxy (decodeWithErr . unK) pairs)
   where
     dproxy = Proxy :: Proxy DynamoEncodable
-
+    decodeWithErr (k, Nothing) = maybe (Left ("Error decoding empty attr: " <> k)) Right (dDecode Nothing)
+    decodeWithErr (k, Just attr) = maybe (Left ("Error decoding attribute: " <> k <> ", value: " <> T.pack (show attr)))
+                                          Right
+                                          (dDecode (Just attr))
 
 defaultPutItem :: forall a r. DynamoTable a r => a -> D.PutItem
 defaultPutItem item = D.putItem tblname & D.piItem .~ gsEncode item

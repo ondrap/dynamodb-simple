@@ -145,8 +145,8 @@ getItem consistency p key = do
   if | null result -> return Nothing
      | otherwise ->
           case dGsDecode result of
-              Just res -> return (Just res)
-              Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show result))
+              Right res -> return (Just res)
+              Left err -> throwM (DynamoException $ "Cannot decode item: " <> err)
 
 -- | Delete item from the database by specifying the primary key.
 deleteItemByKey :: forall m a r. (MonadAWS m, DynamoTable a r) => Proxy a -> PrimaryKey a r -> m ()
@@ -207,8 +207,8 @@ updateItemByKey p pkey actions
   | Just cmd <- dUpdateItem p pkey actions Nothing = do
         rs <- send (cmd & D.uiReturnValues .~ Just D.AllNew)
         case dGsDecode (rs ^. D.uirsAttributes) of
-            Just res -> return res
-            Nothing -> throwM (DynamoException $ "Cannot decode item: " <> T.pack (show rs))
+            Right res -> return res
+            Left err -> throwM (DynamoException $ "Cannot decode item: " <> err)
   | otherwise = do
       rs <- getItem Strongly p pkey
       case rs of
