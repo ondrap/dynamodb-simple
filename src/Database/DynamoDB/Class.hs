@@ -44,6 +44,7 @@ module Database.DynamoDB.Class (
 ) where
 
 import           Control.Lens                     ((.~), sequenceOf, _2)
+import           Data.Bifunctor                   (first)
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
 import           Data.List.NonEmpty               (NonEmpty ((:|)), nonEmpty)
@@ -246,10 +247,11 @@ gsDecodeG names attrs =
     in to . SOP . Z <$> hsequence (hcliftA dproxy (decodeWithErr . unK) pairs)
   where
     dproxy = Proxy :: Proxy DynamoEncodable
-    decodeWithErr (k, Nothing) = maybe (Left ("Error decoding empty attr: " <> k)) Right (dDecode Nothing)
-    decodeWithErr (k, Just attr) = maybe (Left ("Error decoding attribute: " <> k <> ", value: " <> T.pack (show attr)))
-                                          Right
-                                          (dDecode (Just attr))
+    decodeWithErr (k, Nothing) = first (("Error decoding empty attr: " <> k <> " -> ") <>) (dDecodeEither Nothing)
+    decodeWithErr (k, Just attr) = 
+        first
+          (\err -> "Error decoding attr: " <> k <> " -> " <> err <> " from: " <> T.pack (show attr))
+          (dDecodeEither (Just attr))
 
 defaultPutItem :: forall a r. DynamoTable a r => a -> D.PutItem
 defaultPutItem item = D.putItem tblname & D.piItem .~ gsEncode item

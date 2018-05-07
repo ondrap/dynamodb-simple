@@ -95,7 +95,6 @@ import           Data.Bool                           (bool)
 import           Data.Function                       ((&))
 import           Data.Proxy
 import           Data.Semigroup                      ((<>))
-import qualified Data.Text                           as T
 import           Network.AWS
 import qualified Network.AWS.DynamoDB.DeleteItem     as D
 import qualified Network.AWS.DynamoDB.GetItem        as D

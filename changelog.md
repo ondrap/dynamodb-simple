@@ -1,3 +1,7 @@
+# 0.6.0.0
+
+- add dDecodeEither method to DynamoEncodable for better error reporting
+
 # 0.5.0.0
 
 - Added UUID DynamoEncodable instance

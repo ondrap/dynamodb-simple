@@ -288,8 +288,9 @@ deriveEncodable' table translate = do
     lift [d|
       instance DynamoEncodable $(conT table) where
           dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
-          dDecode (Just attr) = either (const Nothing) Just (gsDecodeG $(fieldList) (attr ^. avM))
-          dDecode Nothing = Nothing
+          dDecode = either (const Nothing) Just . dDecodeEither
+          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (attr ^. avM)
+          dDecodeEither Nothing = Left "Missing value"
       |] >>= tell
     let constrs = mkConstrNames tblFieldNames
     forM_ constrs $ \constr ->

@@ -36,7 +36,7 @@ module Database.DynamoDB.Types (
 import           Control.Exception           (Exception)
 import           Control.Lens                ((.~), (^.))
 import qualified Data.Aeson                  as AE
-import           Data.Bifunctor (first)
+import           Data.Bifunctor              (first)
 import qualified Data.ByteString             as BS
 import           Data.ByteString.Lazy        (toStrict)
 import           Data.Double.Conversion.Text (toShortest)
@@ -46,6 +46,7 @@ import           Data.Hashable               (Hashable)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
 import           Data.Maybe                  (mapMaybe)
+import           Data.Monoid                 ((<>))
 import           Data.Proxy
 import           Data.UUID.Types             (UUID)
 import qualified Data.UUID.Types             as UUID
@@ -61,7 +62,7 @@ import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
                                               attributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
-import           Text.Read                   (readMaybe, readEither)
+import           Text.Read                   (readMaybe)
 import Data.Int (Int16, Int32, Int64)
 
 
@@ -186,6 +187,12 @@ class DynamoEncodable a where
   dDecode (Just attr) = attr ^. D.avS >>= (readMaybe . T.unpack)
   dDecode Nothing = Nothing
 
+  -- | Decode data. Return (Left err) on parsing error, gets
+  --  'Nothing' on input if the attribute was missing in the database.
+  -- The default instance uses dDecode, define this just for better errors
+  dDecodeEither :: Maybe AttributeValue -> Either T.Text a
+  dDecodeEither = maybe (Left "Decoding error") Right . dDecode
+ 
   -- | Aid for searching for empty list and hashmap; these can be represented
   -- both by empty list and by missing value, if this returns true, enhance search.
   -- Also used by joins to weed out empty foreign keys
@@ -194,40 +201,66 @@ class DynamoEncodable a where
 
 instance DynamoEncodable Scientific where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Integer where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Word where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int16 where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int32 where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int64 where
   dEncode = Just . dScalarEncode
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Double where
   dEncode num = Just $ attributeValue & D.avN .~ (Just $ toShortest num)
-  dDecode (Just attr) = attr ^. D.avN >>= AE.decodeStrict . encodeUtf8
-  dDecode Nothing = Nothing -- Fail on missing attr
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = 
+      maybe (Left "Missing value") Right (attr ^. D.avN)
+      >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
+  dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Bool where
   dEncode b = Just $ attributeValue & D.avBOOL .~ Just b
-  dDecode (Just attr) = attr ^. D.avBOOL
-  dDecode Nothing = Nothing
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = maybe (Left "Missing value") Right (attr ^. D.avBOOL)
+  dDecodeEither Nothing = Left "Missing attr"
+
 instance DynamoEncodable T.Text where
   dEncode "" = Nothing
   dEncode txt = Just (dScalarEncode txt)
@@ -257,8 +290,9 @@ instance DynamoScalar 'D.S UUID where
 instance DynamoEncodable a => DynamoEncodable (Maybe a) where
   dEncode Nothing = Nothing
   dEncode (Just key) = dEncode key
-  dDecode Nothing = Just Nothing
-  dDecode (Just attr) = Just <$> dDecode (Just attr)
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither Nothing = Right Nothing
+  dDecodeEither (Just attr) = Just <$> dDecodeEither (Just attr)
   dIsMissing Nothing = True
   dIsMissing _ = False
 instance (Ord a, DynamoScalar v a) => DynamoEncodable (Set.Set a) where
@@ -266,25 +300,30 @@ instance (Ord a, DynamoScalar v a) => DynamoEncodable (Set.Set a) where
   dEncode dta = Just $ dSetEncode dta
   dDecode (Just attr) = dSetDecode attr
   dDecode Nothing = Just Set.empty
+  dDecodeEither (Just attr) = maybe (Left "Error decoding set") Right (dSetDecode attr)
+  dDecodeEither Nothing = Right Set.empty
 instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
   dEncode dta =
       let textmap = HMap.fromList $ mapMaybe (\(key, val) -> (toText key,) <$> dEncode val) $ HMap.toList dta
       in Just $ attributeValue & D.avM .~ textmap
-  dDecode (Just attr) =
-      let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecode (Just val)) $ HMap.toList (attr ^. D.avM)
-      in HMap.fromList <$> attrlist
-  dDecode Nothing = Just mempty
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) =
+    let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecodeEither (Just val)) $ HMap.toList (attr ^. D.avM)
+    in HMap.fromList <$> attrlist
+  dDecodeEither Nothing = Right mempty
   dIsMissing = null
 -- | DynamoDB cannot represent empty items; ['Maybe' a] will lose Nothings.
 instance DynamoEncodable a => DynamoEncodable [a] where
   dEncode lst = Just $ attributeValue & D.avL .~ mapMaybe dEncode lst
-  dDecode (Just attr) = traverse (dDecode . Just) (attr ^. D.avL)
-  dDecode Nothing = Just mempty
+  dDecode = either (const Nothing) Just . dDecodeEither
+  dDecodeEither (Just attr) = traverse (dDecodeEither . Just) (attr ^. D.avL)
+  dDecodeEither Nothing = Right mempty
   dIsMissing = null
 
 instance {-# OVERLAPPABLE #-} DynamoEncodable a => DynamoEncodable (Tagged v a) where
   dEncode = dEncode . unTagged
   dDecode a = Tagged <$> dDecode a
+  dDecodeEither a = Tagged <$> dDecodeEither a
   dIsMissing = dIsMissing . unTagged
 
 -- | Partial encoding/decoding Aeson values. Empty strings get converted to NULL.
@@ -296,19 +335,21 @@ instance DynamoEncodable AE.Value where
   dEncode (AE.Bool b) = dEncode b
   dEncode AE.Null = Just $ attributeValue & D.avNULL .~ Just True
   --
-  dDecode Nothing = Just AE.Null
-  dDecode (Just attr) = -- Ok, this is going to be very hacky...
+  dDecode = either (const Nothing) Just . dDecodeEither
+
+  dDecodeEither Nothing = Right AE.Null
+  dDecodeEither (Just attr) = -- Ok, this is going to be very hacky...
     case AE.toJSON attr of
       AE.Object obj -> case HMap.toList obj of
-          [("BOOL", AE.Bool val)] -> Just (AE.Bool val)
-          [("L", _)] -> (AE.Array .V.fromList) <$> mapM (dDecode . Just) (attr ^. D.avL)
-          [("M", _)] -> AE.Object <$> mapM (dDecode . Just) (attr ^. D.avM)
-          [("N", AE.String num)] -> AE.decodeStrict (encodeUtf8 num)
-          [("N", num@(AE.Number _))] -> Just num -- Just in case, this is usually not returned
-          [("S", AE.String val)] -> Just (AE.String val)
-          [("NULL", _)] -> Just AE.Null
-          _ -> Nothing
-      _ -> Nothing -- This shouldn't happen
+          [("BOOL", AE.Bool val)] -> Right (AE.Bool val)
+          [("L", _)] -> (AE.Array .V.fromList) <$> mapM (dDecodeEither . Just) (attr ^. D.avL)
+          [("M", _)] -> AE.Object <$> mapM (dDecodeEither . Just) (attr ^. D.avM)
+          [("N", AE.String num)] -> first T.pack (AE.eitherDecodeStrict (encodeUtf8 num))
+          [("N", num@(AE.Number _))] -> Right num -- Just in case, this is usually not returned
+          [("S", AE.String val)] -> Right (AE.String val)
+          [("NULL", _)] -> Right AE.Null
+          _ -> Left ("Undecodable json value: " <> decodeUtf8 (toStrict (AE.encode obj)))
+      _ -> Left "Wrong dynamo data" -- This shouldn't happen
   --
   dIsMissing AE.Null = True
   dIsMissing _ = False
