@@ -48,7 +48,6 @@ import           Control.Lens.TH                (makeLenses)
 import           Control.Monad                  ((>=>))
 import           Control.Monad.Catch            (throwM)
 import           Data.Bool                      (bool)
-import           Data.Coerce                    (coerce)
 import           Data.Conduit                   (Conduit, Source, (=$=))
 import qualified Data.Conduit.List              as CL
 import           Data.Foldable                  (toList)
@@ -66,7 +65,6 @@ import           Network.AWS
 import qualified Network.AWS.DynamoDB.Query     as D
 import qualified Network.AWS.DynamoDB.Scan      as D
 import qualified Network.AWS.DynamoDB.Types     as D
-import           Network.AWS.Pager              (AWSPager (..))
 import           Numeric.Natural                (Natural)
 import qualified Data.HashMap.Strict as HMap
 
@@ -122,36 +120,10 @@ queryCmd q =
     addStartKey (Just (key, range)) =
         D.qExclusiveStartKey .~ dQueryKeyToAttr (Proxy :: Proxy a) (key, range)
 
--- | When https://github.com/brendanhay/amazonka/issues/340 is fixed, remove
-newtype FixedQuery = FixedQuery D.Query
-instance AWSRequest FixedQuery where
-  type Rs FixedQuery = D.QueryResponse
-  request (FixedQuery a) = coerce (request a)
-  response lgr svc _ = response lgr svc (Proxy :: Proxy D.Query)
-instance AWSPager FixedQuery where
-  page (FixedQuery dq) resp
-    | null lastkey = Nothing
-    | otherwise = Just $ FixedQuery (dq & D.qExclusiveStartKey .~ lastkey)
-    where
-      lastkey = resp ^. D.qrsLastEvaluatedKey
-
-newtype FixedScan = FixedScan D.Scan
-instance AWSRequest FixedScan where
-  type Rs FixedScan = D.ScanResponse
-  request (FixedScan a) = coerce (request a)
-  response lgr svc _ = response lgr svc (Proxy :: Proxy D.Scan)
-instance AWSPager FixedScan where
-  page (FixedScan dq) resp
-    | null lastkey = Nothing
-    | otherwise = Just $ FixedScan (dq & D.sExclusiveStartKey .~ lastkey)
-    where
-      lastkey = resp ^. D.srsLastEvaluatedKey
-
-
 -- | Same as 'querySource', but return data in original chunks.
 querySourceChunks :: forall a t m hash range. (CanQuery a t hash range, MonadAWS m)
   => Proxy a -> QueryOpts a hash range -> Source m [a]
-querySourceChunks _ q = paginate (FixedQuery (queryCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
+querySourceChunks _ q = paginate (queryCmd q) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
 
 -- | Generic query function. You can query table or indexes that have
 -- a range key defined. The filter condition cannot access the hash and range keys.
@@ -164,7 +136,7 @@ querySourceChunksByKey :: forall a parent hash rest v1 m r.
   (DynamoIndex a parent 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v1 hash, MonadAWS m,
    DynamoTable parent r)
   => Proxy a -> hash -> Source m [a]
-querySourceChunksByKey p key = paginate (FixedQuery sQuery) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
+querySourceChunksByKey p key = paginate sQuery =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.qrsItems))
   where
     sQuery = D.query (tableName (Proxy :: Proxy parent))
                                    & D.qKeyConditionExpression .~ Just "#K = :key"
@@ -304,7 +276,7 @@ scanOpts = ScanOpts Nothing Eventually Nothing Nothing Nothing
 
 -- | Conduit source for running scan; the same as 'scanSource', but return results in chunks as they come.
 scanSourceChunks :: (MonadAWS m, TableScan a r t) => Proxy a -> ScanOpts a r -> Source m [a]
-scanSourceChunks _ q = paginate (FixedScan (scanCmd q)) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.srsItems))
+scanSourceChunks _ q = paginate (scanCmd q) =$= CL.mapM (\res -> mapM rsDecoder (res ^. D.srsItems))
 
 -- | Conduit source for running a scan.
 scanSource :: (MonadAWS m, TableScan a r t) => Proxy a -> ScanOpts a r -> Source m a

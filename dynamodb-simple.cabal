@@ -27,7 +27,7 @@ library
                        Database.DynamoDB.Internal, Database.DynamoDB.BatchRequest,
                        Database.DynamoDB.QueryRequest, Database.DynamoDB.THLens,
                        Database.DynamoDB.THContains, Database.DynamoDB.THConvert
-  build-depends:       base >=4.8 && <5, amazonka-dynamodb >= 1.4.5, generics-sop,
+  build-depends:       base >=4.8 && <5, amazonka-dynamodb >= 1.5.0, generics-sop,
                        unordered-containers, text, lens, double-conversion,
                        semigroups, bytestring >= 0.10.8.0, containers, monad-supply,
                        template-haskell, transformers, exceptions,

@@ -1,6 +1,7 @@
 # 0.6.0.0
 
 - add dDecodeEither method to DynamoEncodable for better error reporting
+- removed hack for faulty AWSpager form 1.4.5 amazonka-dynamodb
 
 # 0.5.0.0
 
