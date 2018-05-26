@@ -312,9 +312,9 @@ defaultCreateGlobalIndex p thr =
     attrdefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash))]
     keyschema = keySchemaElement hashname D.Hash :| []
     proj | Just lst <- nonEmpty attrlist =
-                    D.projection & D.pProjectionType .~ Just D.Include
+                    D.projection & D.pProjectionType .~ Just D.PTInclude
                                  & D.pNonKeyAttributes .~ Just lst
-         | otherwise = D.projection & D.pProjectionType .~ Just D.KeysOnly
+         | otherwise = D.projection & D.pProjectionType .~ Just D.PTKeysOnly
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (parentKey ++ [hashname])) $ allFieldNames (Proxy :: Proxy a)
 
@@ -331,9 +331,9 @@ mkIndexHelper p = (keyschema, proj, attrdefs)
     keyschema = keySchemaElement hashname D.Hash :| [keySchemaElement rangename D.Range]
     --
     proj | Just lst <- nonEmpty attrlist =
-                    D.projection & D.pProjectionType .~ Just D.Include
+                    D.projection & D.pProjectionType .~ Just D.PTInclude
                                  & D.pNonKeyAttributes .~ Just lst
-         | otherwise = D.projection & D.pProjectionType .~ Just D.KeysOnly
+         | otherwise = D.projection & D.pProjectionType .~ Just D.PTKeysOnly
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (parentKey ++ [hashname, rangename])) $ allFieldNames (Proxy :: Proxy a)
 
