@@ -1,3 +1,7 @@
+# 0.6.0.1
+
+- add compatibility with amazonka > 1.6.0
+
 # 0.6.0.0
 
 - add dDecodeEither method to DynamoEncodable for better error reporting
