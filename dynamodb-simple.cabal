@@ -1,5 +1,5 @@
 name:                dynamodb-simple
-version:             0.6.0.1
+version:             0.6.0.2
 synopsis:            Typesafe library for working with DynamoDB database
 description:         Framework for accessing DynamoDB database. The majority of AWS API
                      is available to the user in a convenient, simple and typesafe manner.
