@@ -26,6 +26,7 @@ import           Network.AWS.DynamoDB     (dynamoDB)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
+import           Data.Maybe               (fromJust)
 
 import           Database.DynamoDB
 import           Database.DynamoDB.Filter
@@ -175,7 +176,7 @@ spec = do
         putItem testitem1
         new1 <- updateItemByKey tTest (tableKey testitem1)
                                 ((iInt' +=. 5) <> (iText' =. "updated") <> (iMText' =. Nothing))
-        Just new2 <- getItem Strongly tTest (tableKey testitem1)
+        new2 <- fromJust <$> getItem Strongly tTest (tableKey testitem1)
         liftIO $ do
             new1 `shouldBe` new2
             iInt new1 `shouldBe` 7

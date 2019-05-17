@@ -28,6 +28,7 @@ import           Network.AWS.DynamoDB     (dynamoDB)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
+import           Data.Maybe               (fromJust)
 
 import           Database.DynamoDB
 import           Database.DynamoDB.Filter
@@ -83,8 +84,8 @@ spec = do
             testitem2 = Test "hash" 2 inner1 Nothing Set.empty [] HMap.empty
         putItem testitem1
         putItem testitem2
-        Just ritem1 <- getItem Strongly tTest ("hash", 1)
-        Just ritem2 <- getItem Strongly tTest ("hash", 2)
+        ritem1 <- fromJust <$> getItem Strongly tTest ("hash", 1)
+        ritem2 <- fromJust <$> getItem Strongly tTest ("hash", 2)
         liftIO $ testitem1 `shouldBe` ritem1
         liftIO $ testitem2 `shouldBe` ritem2
     withDb "Scan conditions" $ do
