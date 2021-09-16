@@ -35,7 +35,7 @@ createTableConversions :: (String -> String) -> Name -> [Name] -> WriterT [Dec] 
 createTableConversions translate table idxes = do
     tblFields <- getFieldNames table translate
     tblConstr <- lift $ getConstructor table
-    clsname <- lift $ newName $ "IndexToTable_" <> nameBase tblConstr
+    clsname <- lift $ newName $ "IndexToTable_" Data.Monoid.<> nameBase tblConstr
     a <- lift $ newName "a"
     let clsdef = ClassD [] clsname [PlainTV a] [] [SigD funcname (AppT (AppT ArrowT (VarT a)) (ConT table))]
     let instth = mapM_ (mkInstance tblFields tblConstr clsname) idxes

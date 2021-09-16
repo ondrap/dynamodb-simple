@@ -78,7 +78,7 @@ getFieldNames :: Name -> (String -> String) -> WriterT [Dec] Q [(String, Type)]
 getFieldNames tbl translate = do
     info <- lift $ reify tbl
     case getRecords info of
-      Left err -> fail $ "Table " <> show tbl <> ": " <> err
+      Left err -> fail $ "Table " Data.Monoid.<> show tbl <> ": " <> err
       Right lst -> return $ map (over _1 translate) lst
   where
     getRecords :: Info -> Either String [(String, Type)]

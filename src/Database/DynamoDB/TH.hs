@@ -42,8 +42,7 @@ import           Generics.SOP
 import           Generics.SOP.TH                 (deriveGenericOnly)
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
-import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput, StreamViewType)
-import           Network.AWS                     (MonadAWS)
+import           Network.AWS.DynamoDB.Types      (newAttributeValue, attributeValue_m, ProvisionedThroughput, StreamViewType)
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Migration     (runMigration)
@@ -139,7 +138,7 @@ mkTableDefs migname TableConfig{..} =
     forM_ localIndexes $ \(idx, _) -> do
         idxHashName <- (fst . head) <$> getFieldNames idx translateField
         when (idxHashName /= tblHashName) $
-            fail ("Hash key " <> show idxHashName <> " in local index " <> show idx
+            fail ("Hash key " Data.Monoid.<> show idxHashName <> " in local index " <> show idx
                   <> " is not equal to table hash key " <> show tblHashName)
 
     -- Instances for indices
@@ -272,8 +271,8 @@ deriveCollection table translate =
 -- Creates:
 --
 -- > instance DynamoEncodable Type where
--- >   dEncode val = Just (attributeValue & avM .~ gdEncodeG [fieldnames] val)
--- >   dDecode (Just attr) = gdDecodeG [fieldnames] (attr ^. avM)
+-- >   dEncode val = Just (newAttributeValue & attributeValue_m .~ gdEncodeG [fieldnames] val)
+-- >   dDecode (Just attr) = gdDecodeG [fieldnames] (attr ^. attributeValue_m)
 -- >   dDecode Nothing = Nothing
 -- > instance InCollection column_type P_Column1 'NestedPath
 -- > instance InCollection column_type P_Column2 'NestedPath
@@ -287,9 +286,9 @@ deriveEncodable' table translate = do
     let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL . fst) tblFieldNames)
     lift [d|
       instance DynamoEncodable $(conT table) where
-          dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
+          dEncode val = Just (newAttributeValue & attributeValue_m .~ gsEncodeG $(fieldList) val)
           dDecode = either (const Nothing) Just . dDecodeEither
-          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (attr ^. avM)
+          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (attr ^. attributeValue_m)
           dDecodeEither Nothing = Left "Missing value"
       |] >>= tell
     let constrs = mkConstrNames tblFieldNames
@@ -305,7 +304,7 @@ mkMigrationFunc name table globindexes locindexes = do
         locMap = ListE (map locIdxTemplate locindexes)
     let funcname = mkName name
     m <- newName "m"
-    let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)]
+    let signature = SigD funcname (ForallT [PlainTV m] []
                                   (AppT (AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text))
                                   (ConT ''ProvisionedThroughput)))
                                   (AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType)))

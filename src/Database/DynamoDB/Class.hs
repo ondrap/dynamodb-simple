@@ -43,7 +43,7 @@ module Database.DynamoDB.Class (
   , ContainsTableKey(..)
 ) where
 
-import           Control.Lens                     ((.~), sequenceOf, _2)
+import           Control.Lens                     ((.~), (?~), sequenceOf, _2)
 import           Data.Bifunctor                   (first)
 import           Data.Function                    ((&))
 import qualified Data.HashMap.Strict              as HMap
@@ -56,8 +56,8 @@ import qualified Network.AWS.DynamoDB.PutItem     as D
 import qualified Network.AWS.DynamoDB.Query       as D
 import qualified Network.AWS.DynamoDB.Scan        as D
 import           Network.AWS.DynamoDB.Types       (ProvisionedThroughput,
-                                                   globalSecondaryIndex,
-                                                   keySchemaElement, AttributeValue)
+                                                   newGlobalSecondaryIndex,
+                                                   newKeySchemaElement, AttributeValue)
 import qualified Network.AWS.DynamoDB.Types       as D
 import Data.HashMap.Strict (HashMap)
 import Data.Maybe (mapMaybe)
@@ -247,54 +247,56 @@ gsDecodeG names attrs =
     in to . SOP . Z <$> hsequence (hcliftA dproxy (decodeWithErr . unK) pairs)
   where
     dproxy = Proxy :: Proxy DynamoEncodable
-    decodeWithErr (k, Nothing) = first (("Error decoding empty attr: " <> k <> " -> ") <>) (dDecodeEither Nothing)
+    decodeWithErr (k, Nothing) = first (("Error decoding empty attr: " Data.Monoid.<> k <> " -> ") <>) (dDecodeEither Nothing)
     decodeWithErr (k, Just attr) = 
         first
           (\err -> "Error decoding attr: " <> k <> " -> " <> err <> " from: " <> T.pack (show attr))
           (dDecodeEither (Just attr))
 
 defaultPutItem :: forall a r. DynamoTable a r => a -> D.PutItem
-defaultPutItem item = D.putItem tblname & D.piItem .~ gsEncode item
+defaultPutItem item = D.newPutItem tblname & D.putItem_item .~ gsEncode item
   where
     tblname = tableName (Proxy :: Proxy a)
 
 defaultCreateTable :: forall a v hash rest. (DynamoTable a 'NoRange, Code a ~ '[ hash ': rest ], DynamoScalar v hash)
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTable p thr =
-    D.createTable (tableName p) (hashKey :| []) thr
-      & D.ctAttributeDefinitions .~ keyDefs
+    D.newCreateTable (tableName p) (hashKey :| [])
+      & D.createTable_provisionedThroughput ?~ thr
+      & D.createTable_attributeDefinitions .~ keyDefs
   where
     hashname = head (allFieldNames p)
-    hashKey = keySchemaElement hashname D.Hash
-    keyDefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash))]
+    hashKey = newKeySchemaElement hashname D.KeyType_HASH
+    keyDefs = [D.newAttributeDefinition hashname (dType (Proxy :: Proxy hash))]
 
 defaultCreateTableRange :: forall a hash range rest v1 v2.
     (DynamoTable a 'WithRange, Code a ~ '[ hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range)
   => Proxy a -> ProvisionedThroughput -> D.CreateTable
 defaultCreateTableRange p thr =
-    D.createTable (tableName p) (hashKey :| [rangeKey]) thr
-      & D.ctAttributeDefinitions .~ keyDefs
+    D.newCreateTable (tableName p) (hashKey :| [rangeKey])
+      & D.createTable_provisionedThroughput ?~ thr
+      & D.createTable_attributeDefinitions .~ keyDefs
   where
     (hashname:rangename:_) = allFieldNames p
-    hashKey = keySchemaElement hashname D.Hash
-    rangeKey = keySchemaElement rangename D.Range
-    keyDefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash)),
-               D.attributeDefinition rangename (dType (Proxy :: Proxy range))]
+    hashKey = newKeySchemaElement hashname D.KeyType_HASH
+    rangeKey = newKeySchemaElement rangename D.KeyType_RANGE
+    keyDefs = [D.newAttributeDefinition hashname (dType (Proxy :: Proxy hash)),
+               D.newAttributeDefinition rangename (dType (Proxy :: Proxy range))]
 
 defaultQueryKey :: (CanQuery a t hash range, DynamoScalar v1 hash, DynamoScalar v2 range)
     => Proxy a -> hash -> Maybe (RangeOper range) -> D.Query
 defaultQueryKey p key Nothing =
-  D.query (qTableName p) & D.qKeyConditionExpression .~ Just "#K = :key"
-                         & D.qExpressionAttributeNames .~ HMap.singleton "#K" hashname
-                         & D.qExpressionAttributeValues .~ HMap.singleton ":key" (dScalarEncode key)
-                         & D.qIndexName .~ qIndexName p
+  D.newQuery (qTableName p) & D.query_keyConditionExpression ?~ "#K = :key"
+                            & D.query_expressionAttributeNames ?~ HMap.singleton "#K" hashname
+                            & D.query_expressionAttributeValues ?~ HMap.singleton ":key" (dScalarEncode key)
+                            & D.query_indexName .~ qIndexName p
   where
     (hashname:_) = allFieldNames p
 defaultQueryKey p key (Just range) =
-  D.query (qTableName p) & D.qKeyConditionExpression .~ Just condExpression
-                         & D.qExpressionAttributeNames .~ attrnames
-                         & D.qExpressionAttributeValues .~ attrvals
-                         & D.qIndexName .~ qIndexName p
+  D.newQuery (qTableName p) & D.query_keyConditionExpression ?~ condExpression
+                            & D.query_expressionAttributeNames ?~ attrnames
+                            & D.query_expressionAttributeValues ?~ attrvals
+                            & D.query_indexName .~ qIndexName p
   where
     rangeSubst = "#R"
     condExpression = "#K = :key AND " <> rangeOper range rangeSubst
@@ -306,15 +308,16 @@ defaultCreateGlobalIndex :: forall a r parent r2 hash rest v.
   (DynamoIndex a parent r, DynamoTable parent r2, Code a ~ '[hash ': rest ], DynamoScalar v hash)
   => Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateGlobalIndex p thr =
-    (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
+    (newGlobalSecondaryIndex (indexName p) keyschema proj
+      & D.globalSecondaryIndex_provisionedThroughput ?~ thr, attrdefs)
   where
     (hashname:_) = allFieldNames p
-    attrdefs = [D.attributeDefinition hashname (dType (Proxy :: Proxy hash))]
-    keyschema = keySchemaElement hashname D.Hash :| []
+    attrdefs = [D.newAttributeDefinition hashname (dType (Proxy :: Proxy hash))]
+    keyschema = newKeySchemaElement hashname D.KeyType_HASH :| []
     proj | Just lst <- nonEmpty attrlist =
-                    D.projection & D.pProjectionType .~ Just D.PTInclude
-                                 & D.pNonKeyAttributes .~ Just lst
-         | otherwise = D.projection & D.pProjectionType .~ Just D.PTKeysOnly
+                    D.newProjection & D.projection_projectionType .~ Just D.ProjectionType_INCLUDE
+                                    & D.projection_nonKeyAttributes .~ Just lst
+         | otherwise = D.newProjection & D.projection_projectionType .~ Just D.ProjectionType_KEYS_ONLY
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (parentKey ++ [hashname])) $ allFieldNames (Proxy :: Proxy a)
 
@@ -326,14 +329,14 @@ mkIndexHelper p = (keyschema, proj, attrdefs)
   where
     (hashname:rangename:_) = allFieldNames p
     (hashproxy, rangeproxy) = (Proxy :: Proxy hash, Proxy :: Proxy range)
-    attrdefs = [D.attributeDefinition hashname (dType hashproxy), D.attributeDefinition rangename (dType rangeproxy)]
+    attrdefs = [D.newAttributeDefinition hashname (dType hashproxy), D.newAttributeDefinition rangename (dType rangeproxy)]
     --
-    keyschema = keySchemaElement hashname D.Hash :| [keySchemaElement rangename D.Range]
+    keyschema = newKeySchemaElement hashname D.KeyType_HASH :| [newKeySchemaElement rangename D.KeyType_RANGE]
     --
     proj | Just lst <- nonEmpty attrlist =
-                    D.projection & D.pProjectionType .~ Just D.PTInclude
-                                 & D.pNonKeyAttributes .~ Just lst
-         | otherwise = D.projection & D.pProjectionType .~ Just D.PTKeysOnly
+                    D.newProjection & D.projection_projectionType .~ Just D.ProjectionType_INCLUDE
+                                    & D.projection_nonKeyAttributes .~ Just lst
+         | otherwise = D.newProjection & D.projection_projectionType .~ Just D.ProjectionType_KEYS_ONLY
     parentKey = primaryFields (Proxy :: Proxy parent)
     attrlist = filter (`notElem` (parentKey ++ [hashname, rangename])) $ allFieldNames (Proxy :: Proxy a)
 
@@ -342,7 +345,8 @@ defaultCreateGlobalIndexRange :: forall a parent r2 hash rest range v1 v2.
     Code a ~ '[hash ': range ': rest ], DynamoScalar v1 hash, DynamoScalar v2 range) =>
   Proxy a -> ProvisionedThroughput -> (D.GlobalSecondaryIndex, [D.AttributeDefinition])
 defaultCreateGlobalIndexRange p thr =
-    (globalSecondaryIndex (indexName p) keyschema proj thr, attrdefs)
+    (newGlobalSecondaryIndex (indexName p) keyschema proj
+      & D.globalSecondaryIndex_provisionedThroughput ?~ thr, attrdefs)
   where
     (keyschema, proj, attrdefs) = mkIndexHelper p
 
@@ -351,10 +355,10 @@ createLocalIndex :: forall a parent r2 hash rest range v1 v2.
     DynamoScalar v1 hash, DynamoScalar v2 range) =>
   Proxy a -> (D.LocalSecondaryIndex, [D.AttributeDefinition])
 createLocalIndex p =
-    (D.localSecondaryIndex (indexName p) keyschema proj, attrdefs)
+    (D.newLocalSecondaryIndex (indexName p) keyschema proj, attrdefs)
   where
     (keyschema, proj, attrdefs) = mkIndexHelper p
 
 
 defaultScan :: (TableScan a r t) => Proxy a -> D.Scan
-defaultScan p = D.scan (qsTableName p) & D.sIndexName .~ qsIndexName p
+defaultScan p = D.newScan (qsTableName p) & D.scan_indexName .~ qsIndexName p
