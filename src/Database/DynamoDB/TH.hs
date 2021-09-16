@@ -310,45 +310,14 @@ mkMigrationFunc name table globindexes locindexes = do
     let envArg = ConT ''Env
         provisionMapArg = AppT (AppT (ConT ''HashMap) (ConT ''T.Text)) (ConT ''ProvisionedThroughput)
         streamArg = AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType))) (AppT (VarT m) (TupleT 0))
-        -- signature = SigD funcname (ForallT [PlainTV m] []
-        --                               (AppT envArg (AppT ArrowT (AppT provisionMapArg (AppT ArrowT streamArg))))
         mkConstraint n = AppT (ConT n) (VarT m)
         signature = SigD funcname (ForallT [PlainTV m] [mkConstraint ''MonadResource, mkConstraint ''MonadCatch]
-                                      (AppT (AppT ArrowT envArg) (AppT (AppT ArrowT provisionMapArg) streamArg))
-                                      --TODO: drop
-                                      --(AppT ArrowT (AppT _a _b))
-                                          -- (AppT ArrowT (AppT (''Env)))
-                                          -- ((AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text)) (ConT ''ProvisionedThroughput)))
-                                          -- (AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType))) (AppT (VarT m) (TupleT 0))))
-
-                                      )
-    -- TODO: drop
-    -- return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
-    --           (SigE (ConE 'Proxy)
-    --           (AppT (ConT ''Proxy)
-    --           (ConT table)))) glMap) locMap)) []]
-    --TODO: update
-
-
-
+                                      (AppT (AppT ArrowT envArg) (AppT (AppT ArrowT provisionMapArg) streamArg)))
 
     envVarName <- newName "env"
-    --TODO: clean up
     let tableProxy = (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT table)))
     let body = NormalB
-         -- (AppE (VarE 'runMigration) (AppE (VarE envVarName) (AppE tableProxy (AppE glMap locMap))))
          (AppE (AppE (AppE (AppE (VarE 'runMigration) (VarE envVarName)) tableProxy) glMap) locMap)
-         -- (AppE
-         --       (AppE
-         --          (AppE
-         --            (AppE
-         --              (VarE 'runMigration)
-         --              (VarE envVarName))
-         --            (SigE (ConE 'Proxy)
-         --                          (AppT (ConT ''Proxy)
-         --                          (ConT table))))
-         --          glMap)
-         --       locMap)
 
     return [signature, FunD funcname [Clause [VarP envVarName] body []]]
   where

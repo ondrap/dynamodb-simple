@@ -343,7 +343,6 @@ instance DynamoEncodable AE.Value where
   --
   dDecode = either (const Nothing) Just . dDecodeEither
 
-  --dDecodeEither :: Maybe AttributeValue -> Either T.Text AE.Object --TODO: drop
   dDecodeEither Nothing = Right AE.Null
   dDecodeEither (Just attr) = -- Ok, this is going to be very hacky...
     case AE.toJSON attr of
