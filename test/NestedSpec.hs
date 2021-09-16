@@ -14,17 +14,19 @@ module NestedSpec where
 
 import           Control.Exception.Safe   (catchAny, finally)
 import           Control.Monad.IO.Class   (liftIO)
+import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Lens             (makeLenses, (^.), (^?), ix, (^..))
 import           Data.Function            ((&))
 import           Data.Hashable
 import           Data.HashMap.Strict      (HashMap)
 import qualified Data.HashMap.Strict      as HMap
+import           Data.Maybe
 import           Data.Proxy
 import qualified Data.Set                 as Set
 import           Data.Tagged
 import qualified Data.Text                as T
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB)
+import qualified Network.AWS.DynamoDB
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
@@ -58,7 +60,7 @@ data Test = Test {
 } deriving (Show, Eq)
 mkTableDefs "migrateTest" (tableConfig "" (''Test, WithRange) [] [])
 
-withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
+withDb :: Example (IO b) => String -> (Env -> ResourceT IO b) -> SpecWith (Arg (IO b))
 withDb msg code = it msg runcode
   where
     runcode = do
@@ -66,82 +68,82 @@ withDb msg code = it msg runcode
       setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
       lgr  <- newLogger Debug stdout
       env  <- newEnv Discover
-      let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+      let dynamo = setEndpoint False "localhost" 8000 Network.AWS.DynamoDB.defaultService
       let newenv = env & configure dynamo
                        -- & set envLogger lgr
-      runResourceT $ runAWS newenv $ do
-          deleteTable (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
-          migrateTest mempty Nothing
-          code `finally` deleteTable (Proxy :: Proxy Test)
+      runResourceT $ do
+          deleteTable newenv (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
+          migrateTest newenv mempty Nothing
+          code newenv `finally` deleteTable newenv (Proxy :: Proxy Test)
 
 spec :: Spec
 spec = do
   describe "Nested structures" $ do
-    withDb "Save and retrieve" $ do
+    withDb "Save and retrieve" $ \env -> do
         let inner1 = Inner "test" (Just 3) "test"
             inner2 = Inner "" Nothing ""
             testitem1 = Test "hash" 1 inner1 (Just inner2) (Set.singleton (Tagged "test")) [inner1] (HMap.singleton "test" inner2)
             testitem2 = Test "hash" 2 inner1 Nothing Set.empty [] HMap.empty
-        putItem testitem1
-        putItem testitem2
-        ritem1 <- fromJust <$> getItem Strongly tTest ("hash", 1)
-        ritem2 <- fromJust <$> getItem Strongly tTest ("hash", 2)
+        putItem env testitem1
+        putItem env testitem2
+        ritem1 <- fromJust <$> getItem env Strongly tTest ("hash", 1)
+        ritem2 <- fromJust <$> getItem env Strongly tTest ("hash", 2)
         liftIO $ testitem1 `shouldBe` ritem1
         liftIO $ testitem2 `shouldBe` ritem2
-    withDb "Scan conditions" $ do
+    withDb "Scan conditions" $ \env -> do
         let inner1 = Inner "test" (Just 3) ""
             inner2 = Inner "" Nothing "test"
             testitem1 = Test "hash" 1 inner1 (Just inner2) (Set.singleton (Tagged "test")) [inner1] (HMap.singleton "test" inner2)
             testitem2 = Test "hash" 2 inner2 Nothing Set.empty [] HMap.empty
-        putItem testitem1
-        putItem testitem2
+        putItem env testitem1
+        putItem env testitem2
         --
-        items1 <- scanCond tTest (iInner' <.> nFirst' ==. "test") 10
+        items1 <- scanCond env tTest (iInner' <.> nFirst' ==. "test") 10
         liftIO $ items1 `shouldBe` [testitem1]
         --
-        items2 <- scanCond tTest (iInner' <.> nFirst' ==. "") 10
+        items2 <- scanCond env tTest (iInner' <.> nFirst' ==. "") 10
         liftIO $ items2 `shouldBe` [testitem2]
         --
-        items3 <- scanCond tTest (iMInner' <.> nThird' ==. "test") 10
+        items3 <- scanCond env tTest (iMInner' <.> nThird' ==. "test") 10
         liftIO $ items3 `shouldBe` [testitem1]
         --
-        items4 <- scanCond tTest (iMInner' ==. Nothing) 10
+        items4 <- scanCond env tTest (iMInner' ==. Nothing) 10
         liftIO $ items4 `shouldBe` [testitem2]
         --
-        items5 <- scanCond tTest (iSet' `setContains` Tagged "test") 10
+        items5 <- scanCond env tTest (iSet' `setContains` Tagged "test") 10
         liftIO $ items5 `shouldBe` [testitem1]
         --
-        items6 <- scanCond tTest (iList' <!> 0 <.> nFirst' ==. "test") 10
+        items6 <- scanCond env tTest (iList' <!> 0 <.> nFirst' ==. "test") 10
         liftIO $ items6 `shouldBe` [testitem1]
         --
-        items7 <- scanCond tTest (iMap' <!:> Tagged "test" <.> nThird' ==. "test") 10
+        items7 <- scanCond env tTest (iMap' <!:> Tagged "test" <.> nThird' ==. "test") 10
         liftIO $ items7 `shouldBe` [testitem1]
 
-    withDb "Nested updates" $ do
+    withDb "Nested updates" $ \env -> do
         let inner1 = Inner "test" (Just 3) ""
             inner2 = Inner "" Nothing "test"
             testitem1 = Test "hash" 1 inner1 (Just inner2) (Set.singleton (Tagged "test")) [inner1] (HMap.singleton "test" inner2)
             testitem2 = Test "hash" 2 inner2 Nothing Set.empty [] HMap.empty
-        putItem testitem1
-        putItem testitem2
+        putItem env testitem1
+        putItem env testitem2
         --
-        newitem1 <- updateItemByKey tTest (tableKey testitem1) (iInner' <.> nFirst' =. "updated")
+        newitem1 <- updateItemByKey env tTest (tableKey testitem1) (iInner' <.> nFirst' =. "updated")
         liftIO $ newitem1 ^. iInner . nFirst `shouldBe` "updated"
         --
-        newitem2 <- updateItemByKey tTest (tableKey testitem1) (add iSet' (Set.singleton (Tagged "test2")))
+        newitem2 <- updateItemByKey env tTest (tableKey testitem1) (add iSet' (Set.singleton (Tagged "test2")))
         liftIO $ newitem2 ^. iSet `shouldBe` Set.fromList [Tagged "test", Tagged "test2"]
         --
-        newitem3 <- updateItemByKey tTest (tableKey testitem1) (prepend iList' [inner2, inner1])
+        newitem3 <- updateItemByKey env tTest (tableKey testitem1) (prepend iList' [inner2, inner1])
         liftIO $ newitem3 ^. iList `shouldBe` [inner2, inner1, inner1]
         --
-        newitem4 <- updateItemByKey tTest (tableKey testitem1) (delListItem iList' 1)
+        newitem4 <- updateItemByKey env tTest (tableKey testitem1) (delListItem iList' 1)
         liftIO $ newitem4 ^. iList `shouldBe` [inner2, inner1]
         --
-        newitem5 <- updateItemByKey tTest (tableKey testitem2) (iMap' <!:> Tagged "test" =. inner1)
+        newitem5 <- updateItemByKey env tTest (tableKey testitem2) (iMap' <!:> Tagged "test" =. inner1)
         liftIO $ newitem5 ^.. iMap . traverse `shouldBe` [inner1]
         liftIO $ newitem5 ^? iMap . ix (Tagged "test")  `shouldBe` Just inner1
         --
-        newitem6 <- updateItemByKey tTest (tableKey testitem2) (delHashKey iMap' (Tagged "test"))
+        newitem6 <- updateItemByKey env tTest (tableKey testitem2) (delHashKey iMap' (Tagged "test"))
         liftIO $ newitem6 ^. iMap `shouldBe` HMap.empty
 
 

@@ -30,8 +30,10 @@ module Database.DynamoDB.TH (
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1, view, (^..))
 import           Control.Monad                   (forM_, unless, when)
+import           Control.Monad.Catch             (MonadCatch)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
+import           Control.Monad.Trans.Resource    (MonadResource)
 import           Data.Bool                       (bool)
 import           Data.Char                       (toUpper)
 import           Data.Function                   ((&))
@@ -42,6 +44,7 @@ import           Generics.SOP
 import           Generics.SOP.TH                 (deriveGenericOnly)
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
+import           Network.AWS                     (Env)
 import           Network.AWS.DynamoDB.Types      (newAttributeValue, attributeValue_m, ProvisionedThroughput, StreamViewType)
 
 import           Database.DynamoDB.Class
@@ -286,9 +289,9 @@ deriveEncodable' table translate = do
     let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL . fst) tblFieldNames)
     lift [d|
       instance DynamoEncodable $(conT table) where
-          dEncode val = Just (newAttributeValue & attributeValue_m .~ gsEncodeG $(fieldList) val)
+          dEncode val = Just (newAttributeValue & attributeValue_m .~ Just (gsEncodeG $(fieldList) val))
           dDecode = either (const Nothing) Just . dDecodeEither
-          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (attr ^. attributeValue_m)
+          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (fromMaybe mempty (attr ^. attributeValue_m))
           dDecodeEither Nothing = Left "Missing value"
       |] >>= tell
     let constrs = mkConstrNames tblFieldNames
@@ -304,15 +307,50 @@ mkMigrationFunc name table globindexes locindexes = do
         locMap = ListE (map locIdxTemplate locindexes)
     let funcname = mkName name
     m <- newName "m"
-    let signature = SigD funcname (ForallT [PlainTV m] []
-                                  (AppT (AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text))
-                                  (ConT ''ProvisionedThroughput)))
-                                  (AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType)))
-                                  (AppT (VarT m) (TupleT 0)))))
-    return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
-              (SigE (ConE 'Proxy)
-              (AppT (ConT ''Proxy)
-              (ConT table)))) glMap) locMap)) []]
+    let envArg = ConT ''Env
+        provisionMapArg = AppT (AppT (ConT ''HashMap) (ConT ''T.Text)) (ConT ''ProvisionedThroughput)
+        streamArg = AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType))) (AppT (VarT m) (TupleT 0))
+        -- signature = SigD funcname (ForallT [PlainTV m] []
+        --                               (AppT envArg (AppT ArrowT (AppT provisionMapArg (AppT ArrowT streamArg))))
+        mkConstraint n = AppT (ConT n) (VarT m)
+        signature = SigD funcname (ForallT [PlainTV m] [mkConstraint ''MonadResource, mkConstraint ''MonadCatch]
+                                      (AppT (AppT ArrowT envArg) (AppT (AppT ArrowT provisionMapArg) streamArg))
+                                      --TODO: drop
+                                      --(AppT ArrowT (AppT _a _b))
+                                          -- (AppT ArrowT (AppT (''Env)))
+                                          -- ((AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text)) (ConT ''ProvisionedThroughput)))
+                                          -- (AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType))) (AppT (VarT m) (TupleT 0))))
+
+                                      )
+    -- TODO: drop
+    -- return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
+    --           (SigE (ConE 'Proxy)
+    --           (AppT (ConT ''Proxy)
+    --           (ConT table)))) glMap) locMap)) []]
+    --TODO: update
+
+
+
+
+    envVarName <- newName "env"
+    --TODO: clean up
+    let tableProxy = (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT table)))
+    let body = NormalB
+         -- (AppE (VarE 'runMigration) (AppE (VarE envVarName) (AppE tableProxy (AppE glMap locMap))))
+         (AppE (AppE (AppE (AppE (VarE 'runMigration) (VarE envVarName)) tableProxy) glMap) locMap)
+         -- (AppE
+         --       (AppE
+         --          (AppE
+         --            (AppE
+         --              (VarE 'runMigration)
+         --              (VarE envVarName))
+         --            (SigE (ConE 'Proxy)
+         --                          (AppT (ConT ''Proxy)
+         --                          (ConT table))))
+         --          glMap)
+         --       locMap)
+
+    return [signature, FunD funcname [Clause [VarP envVarName] body []]]
   where
     glIdxTemplate idx = AppE (VarE 'createGlobalIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
     locIdxTemplate idx = AppE (VarE 'createLocalIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))

@@ -1,0 +1,11 @@
+resolver: lts-18.10
+packages:
+  - "."
+extra-deps:
+  - git: https://github.com/brendanhay/amazonka.git
+    commit: 23495aaf7f08d6666f8e3bc8e72f5041ce7c6801
+    subdirs:
+      - amazonka
+      - amazonka-dynamodb
+flags: {}
+extra-package-dbs: []

@@ -23,6 +23,7 @@ import           Data.Proxy
 import           Data.Semigroup           ((<>))
 import qualified Data.Text                as T
 import           Network.AWS
+import qualified Network.AWS.DynamoDB
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
@@ -64,14 +65,14 @@ withDb msg code = it msg runcode
       setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
       lgr  <- newLogger Debug stdout
       env  <- newEnv Discover
-      let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+      let dynamo = setEndpoint False "localhost" 8000 Network.AWS.DynamoDB.defaultService
       let newenv = env & configure dynamo
                        -- & set envLogger lgr
       runResourceT $ do
-          deleteTable env (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
-          migrateTest mempty Nothing
-          migrateTest2 mempty Nothing
-          code env `finally` deleteTable env (Proxy :: Proxy Test)
+          deleteTable newenv (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
+          migrateTest newenv mempty Nothing
+          migrateTest2 newenv mempty Nothing
+          code newenv `finally` deleteTable newenv (Proxy :: Proxy Test)
 
 spec :: Spec
 spec = do
