@@ -24,6 +24,7 @@ module Database.DynamoDB.Types (
     -- * Marshalling
   , DynamoEncodable(..)
   , DynamoScalar(..)
+  , ScalarValueType (..)
   , ScalarValue(..)
   , IsText(..), IsNumber
     -- * Query datatype
