@@ -71,7 +71,7 @@ instance (Monoid w, MonadSupply s m) => MonadSupply s (WriterT w m) where
   peek = lift peek
   exhausted = lift exhausted
 
-instance Semigroup a => Semigroup (Supply s a) where
+instance Data.Semigroup.Semigroup a => Semigroup (Supply s a) where
   m1 <> m2 = (<>) <$> m1 <*> m2
 
 instance (Semigroup a, Monoid a) => Monoid (Supply s a) where

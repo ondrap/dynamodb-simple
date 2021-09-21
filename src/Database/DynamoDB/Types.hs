@@ -24,6 +24,7 @@ module Database.DynamoDB.Types (
     -- * Marshalling
   , DynamoEncodable(..)
   , DynamoScalar(..)
+  , ScalarValueType (..)
   , ScalarValue(..)
   , IsText(..), IsNumber
     -- * Query datatype
@@ -34,7 +35,7 @@ module Database.DynamoDB.Types (
 ) where
 
 import           Control.Exception           (Exception)
-import           Control.Lens                ((.~), (^.))
+import           Control.Lens                ((.~), (^.), (?~))
 import qualified Data.Aeson                  as AE
 import           Data.Bifunctor              (first)
 import qualified Data.ByteString             as BS
@@ -45,7 +46,7 @@ import           Data.Function               ((&))
 import           Data.Hashable               (Hashable)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HMap
-import           Data.Maybe                  (mapMaybe)
+import           Data.Maybe                  (fromMaybe, mapMaybe)
 import           Data.Monoid                 ((<>))
 import           Data.Proxy
 import           Data.UUID.Types             (UUID)
@@ -60,7 +61,7 @@ import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import qualified Data.Vector                 as V
 import           Network.AWS.DynamoDB.Types  (AttributeValue,
                                               ScalarAttributeType,
-                                              attributeValue)
+                                              newAttributeValue)
 import qualified Network.AWS.DynamoDB.Types  as D
 import           Text.Read                   (readMaybe)
 import Data.Int (Int16, Int32, Int64)
@@ -71,28 +72,34 @@ data DynamoException = DynamoException T.Text
   deriving (Show)
 instance Exception DynamoException
 
--- | Datatype for encoding scalar values
-data ScalarValue (v :: D.ScalarAttributeType) where
-    ScS :: !T.Text -> ScalarValue 'D.S
-    ScN :: !Scientific -> ScalarValue 'D.N
-    ScB :: !BS.ByteString -> ScalarValue 'D.B
+data ScalarValueType
+  = ScalarValueType_S
+  | ScalarValueType_N
+  | ScalarValueType_B
 
-class ScalarAuto (v :: D.ScalarAttributeType) where
+-- | Datatype for encoding scalar values
+data ScalarValue (v :: ScalarValueType) where
+    ScS :: !T.Text -> ScalarValue 'ScalarValueType_S
+    ScN :: !Scientific -> ScalarValue 'ScalarValueType_N
+    ScB :: !BS.ByteString -> ScalarValue 'ScalarValueType_B
+
+
+class ScalarAuto (v :: ScalarValueType) where
   dTypeV :: Proxy v -> ScalarAttributeType
   dSetEncodeV :: [ScalarValue v] -> AttributeValue
   dSetDecodeV :: AttributeValue -> Maybe [ScalarValue v]
-instance ScalarAuto 'D.S where
-  dTypeV _ = D.S
-  dSetEncodeV lst = attributeValue & D.avSS .~ map (\(ScS txt) -> txt) lst
-  dSetDecodeV attr = Just $ map ScS $ attr ^. D.avSS
-instance ScalarAuto 'D.N where
-  dTypeV _ = D.N
-  dSetEncodeV lst = attributeValue & D.avNS .~ map (\(ScN num) -> decodeUtf8 (toStrict $ AE.encode num)) lst
-  dSetDecodeV attr = traverse (\n -> ScN <$> AE.decodeStrict (encodeUtf8 n)) (attr ^. D.avSS)
-instance ScalarAuto 'D.B where
-  dTypeV _ = D.B
-  dSetEncodeV lst = attributeValue & D.avBS .~ map (\(ScB txt) -> txt) lst
-  dSetDecodeV attr = Just $ map ScB $ attr ^. D.avBS
+instance ScalarAuto 'ScalarValueType_S where
+  dTypeV _ = D.ScalarAttributeType_S
+  dSetEncodeV lst = newAttributeValue & D.attributeValue_ss ?~ map (\(ScS txt) -> txt) lst
+  dSetDecodeV attr = Just $ map ScS $ fromMaybe mempty $ attr ^. D.attributeValue_ss
+instance ScalarAuto 'ScalarValueType_N where
+  dTypeV _ = D.ScalarAttributeType_N
+  dSetEncodeV lst = newAttributeValue & D.attributeValue_ns ?~ map (\(ScN num) -> decodeUtf8 (toStrict $ AE.encode num)) lst
+  dSetDecodeV attr = traverse (\n -> ScN <$> AE.decodeStrict (encodeUtf8 n)) (fromMaybe mempty (attr ^. D.attributeValue_ss))
+instance ScalarAuto 'ScalarValueType_B where
+  dTypeV _ = D.ScalarAttributeType_B
+  dSetEncodeV lst = newAttributeValue & D.attributeValue_bs ?~ map (\(ScB txt) -> txt) lst
+  dSetDecodeV attr = Just $ map ScB $ fromMaybe mempty $ attr ^. D.attributeValue_bs
 
 dType :: forall a v. DynamoScalar v a => Proxy a -> ScalarAttributeType
 dType _ = dTypeV (Proxy :: Proxy v)
@@ -100,9 +107,9 @@ dType _ = dTypeV (Proxy :: Proxy v)
 dScalarEncode :: DynamoScalar v a => a -> AttributeValue
 dScalarEncode a =
   case scalarEncode a of
-    ScS txt -> attributeValue & D.avS .~ Just txt
-    ScN num -> attributeValue & D.avN .~ Just (decodeUtf8 (toStrict $ AE.encode num))
-    ScB bs -> attributeValue & D.avB .~ Just bs
+    ScS txt -> newAttributeValue & D.attributeValue_s .~ Just txt
+    ScN num -> newAttributeValue & D.attributeValue_n .~ Just (decodeUtf8 (toStrict $ AE.encode num))
+    ScB bs -> newAttributeValue & D.attributeValue_b .~ Just bs
 
 dSetEncode :: DynamoScalar v a => Set.Set a -> AttributeValue
 dSetEncode vset = dSetEncodeV $ map scalarEncode $ toList vset
@@ -115,37 +122,37 @@ dSetDecode attr = dSetDecodeV attr >>= traverse scalarDecode >>= pure . Set.from
 -- > instance DynamoScalar Network.AWS.DynamoDB.Types.S T.Text where
 -- >    scalarEncode = ScS
 -- >    scalarDecode (ScS txt) = Just txt
-class ScalarAuto v => DynamoScalar (v :: D.ScalarAttributeType) a | a -> v where
+class ScalarAuto v => DynamoScalar (v :: ScalarValueType) a | a -> v where
   -- | Scalars must have total encoding function
   scalarEncode :: a -> ScalarValue v
-  default scalarEncode :: (Show a, Read a, v ~ 'D.S) => a -> ScalarValue v
+  default scalarEncode :: (Show a, Read a, v ~ 'ScalarValueType_S) => a -> ScalarValue v
   scalarEncode = ScS . T.pack . show
 
   scalarDecode :: ScalarValue v -> Maybe a
-  default scalarDecode :: (Show a, Read a, v ~ 'D.S) => ScalarValue v -> Maybe a
+  default scalarDecode :: (Show a, Read a, v ~ 'ScalarValueType_S) => ScalarValue v -> Maybe a
   scalarDecode (ScS txt) = readMaybe (T.unpack txt)
 
-instance DynamoScalar 'D.N Integer where
+instance DynamoScalar 'ScalarValueType_N Integer where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) =
     case floatingOrInteger num :: Either Double Integer of
         Right x -> Just x
         Left _  -> Nothing
 
-instance DynamoScalar 'D.N Int where
+instance DynamoScalar 'ScalarValueType_N Int where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
-instance DynamoScalar 'D.N Int16 where
+instance DynamoScalar 'ScalarValueType_N Int16 where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
-instance DynamoScalar 'D.N Int32 where
+instance DynamoScalar 'ScalarValueType_N Int32 where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
-instance DynamoScalar 'D.N Int64 where
+instance DynamoScalar 'ScalarValueType_N Int64 where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
 
-instance DynamoScalar 'D.N Word where
+instance DynamoScalar 'ScalarValueType_N Word where
   scalarEncode = ScN . fromIntegral
   scalarDecode (ScN num) = toBoundedInteger num
 
@@ -156,21 +163,21 @@ instance {-# OVERLAPPABLE #-} DynamoScalar v a => DynamoScalar v (Tagged x a) wh
 
 -- | Double as a primary key isn't generally a good thing as equality on double
 -- is sometimes a little dodgy. Use scientific instead.
-instance DynamoScalar 'D.N Scientific where
+instance DynamoScalar 'ScalarValueType_N Scientific where
   scalarEncode = ScN
   scalarDecode (ScN num) = Just num
 
 -- | Don't use Double as a part of primary key in a table. It is included here
 -- for convenience to be used as a range key in indexes.
-instance DynamoScalar 'D.N Double where
+instance DynamoScalar 'ScalarValueType_N Double where
   scalarEncode = ScN . fromFloatDigits
   scalarDecode (ScN num) = Just $ toRealFloat num
 
-instance DynamoScalar 'D.S T.Text where
+instance DynamoScalar 'ScalarValueType_S T.Text where
   scalarEncode = ScS
   scalarDecode (ScS txt) = Just txt
 
-instance DynamoScalar 'D.B BS.ByteString where
+instance DynamoScalar 'ScalarValueType_B BS.ByteString where
   scalarEncode = ScB
   scalarDecode (ScB bs) = Just bs
 
@@ -179,12 +186,12 @@ class DynamoEncodable a where
   -- | Encode data. Return 'Nothing' if attribute should be omitted.
   dEncode :: a -> Maybe AttributeValue
   default dEncode :: (Show a, Read a) => a -> Maybe AttributeValue
-  dEncode val = Just $ attributeValue & D.avS .~ (Just $ T.pack $ show val)
+  dEncode val = Just $ newAttributeValue & D.attributeValue_s .~ (Just $ T.pack $ show val)
   -- | Decode data. Return 'Nothing' on parsing error, gets
   --  'Nothing' on input if the attribute was missing in the database.
   dDecode :: Maybe AttributeValue -> Maybe a
   default dDecode :: (Show a, Read a) => Maybe AttributeValue -> Maybe a
-  dDecode (Just attr) = attr ^. D.avS >>= (readMaybe . T.unpack)
+  dDecode (Just attr) = attr ^. D.attributeValue_s >>= (readMaybe . T.unpack)
   dDecode Nothing = Nothing
 
   -- | Decode data. Return (Left err) on parsing error, gets
@@ -203,77 +210,77 @@ instance DynamoEncodable Scientific where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Integer where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Word where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int16 where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int32 where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Int64 where
   dEncode = Just . dScalarEncode
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Double where
-  dEncode num = Just $ attributeValue & D.avN .~ (Just $ toShortest num)
+  dEncode num = Just $ newAttributeValue & D.attributeValue_n .~ (Just $ toShortest num)
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) = 
-      maybe (Left "Missing value") Right (attr ^. D.avN)
+      maybe (Left "Missing value") Right (attr ^. D.attributeValue_n)
       >>= first T.pack . AE.eitherDecodeStrict . encodeUtf8
   dDecodeEither Nothing = Left "Missing attr"
 instance DynamoEncodable Bool where
-  dEncode b = Just $ attributeValue & D.avBOOL .~ Just b
+  dEncode b = Just $ newAttributeValue & D.attributeValue_bool .~ Just b
   dDecode = either (const Nothing) Just . dDecodeEither
-  dDecodeEither (Just attr) = maybe (Left "Missing value") Right (attr ^. D.avBOOL)
+  dDecodeEither (Just attr) = maybe (Left "Missing value") Right (attr ^. D.attributeValue_bool)
   dDecodeEither Nothing = Left "Missing attr"
 
 instance DynamoEncodable T.Text where
   dEncode "" = Nothing
   dEncode txt = Just (dScalarEncode txt)
   dDecode (Just attr)
-    | Just True <- attr ^. D.avNULL = Just ""
-    | otherwise = attr ^. D.avS
+    | Just True <- attr ^. D.attributeValue_null = Just ""
+    | otherwise = attr ^. D.attributeValue_s
   dDecode Nothing = Just ""
   dIsMissing "" = True
   dIsMissing _ = False
 instance DynamoEncodable BS.ByteString where
   dEncode "" = Nothing
   dEncode bs = Just (dScalarEncode bs)
-  dDecode (Just attr) = attr ^. D.avB
+  dDecode (Just attr) = attr ^. D.attributeValue_b
   dDecode Nothing = Just ""
   dIsMissing "" = True
   dIsMissing _ = False
@@ -282,7 +289,7 @@ instance DynamoEncodable BS.ByteString where
 instance DynamoEncodable UUID where
   dEncode uuid = dEncode (UUID.toText uuid)
   dDecode attr = attr >>= dDecode . Just >>= UUID.fromText
-instance DynamoScalar 'D.S UUID where
+instance DynamoScalar 'ScalarValueType_S UUID where
   scalarEncode = ScS . UUID.toText
   scalarDecode (ScS txt) = UUID.fromText txt
 
@@ -305,18 +312,18 @@ instance (Ord a, DynamoScalar v a) => DynamoEncodable (Set.Set a) where
 instance (IsText t, DynamoEncodable a) => DynamoEncodable (HashMap t a) where
   dEncode dta =
       let textmap = HMap.fromList $ mapMaybe (\(key, val) -> (toText key,) <$> dEncode val) $ HMap.toList dta
-      in Just $ attributeValue & D.avM .~ textmap
+      in Just $ newAttributeValue & D.attributeValue_m ?~ textmap
   dDecode = either (const Nothing) Just . dDecodeEither
   dDecodeEither (Just attr) =
-    let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecodeEither (Just val)) $ HMap.toList (attr ^. D.avM)
+    let attrlist = traverse (\(key, val) -> (fromText key,) <$> dDecodeEither (Just val)) $ HMap.toList (fromMaybe mempty (attr ^. D.attributeValue_m))
     in HMap.fromList <$> attrlist
   dDecodeEither Nothing = Right mempty
   dIsMissing = null
 -- | DynamoDB cannot represent empty items; ['Maybe' a] will lose Nothings.
 instance DynamoEncodable a => DynamoEncodable [a] where
-  dEncode lst = Just $ attributeValue & D.avL .~ mapMaybe dEncode lst
+  dEncode lst = Just $ newAttributeValue & D.attributeValue_l ?~ mapMaybe dEncode lst
   dDecode = either (const Nothing) Just . dDecodeEither
-  dDecodeEither (Just attr) = traverse (dDecodeEither . Just) (attr ^. D.avL)
+  dDecodeEither (Just attr) = traverse (dDecodeEither . Just) (fromMaybe mempty (attr ^. D.attributeValue_l))
   dDecodeEither Nothing = Right mempty
   dIsMissing = null
 
@@ -331,9 +338,9 @@ instance DynamoEncodable AE.Value where
   dEncode (AE.Object obj) = dEncode obj
   dEncode (AE.Array lst) = dEncode (toList lst)
   dEncode (AE.String txt) = dEncode txt
-  dEncode num@(AE.Number _) = Just $ attributeValue & D.avN .~ Just (decodeUtf8 (toStrict $ AE.encode num))
+  dEncode num@(AE.Number _) = Just $ newAttributeValue & D.attributeValue_n .~ Just (decodeUtf8 (toStrict $ AE.encode num))
   dEncode (AE.Bool b) = dEncode b
-  dEncode AE.Null = Just $ attributeValue & D.avNULL .~ Just True
+  dEncode AE.Null = Just $ newAttributeValue & D.attributeValue_null .~ Just True
   --
   dDecode = either (const Nothing) Just . dDecodeEither
 
@@ -342,13 +349,13 @@ instance DynamoEncodable AE.Value where
     case AE.toJSON attr of
       AE.Object obj -> case HMap.toList obj of
           [("BOOL", AE.Bool val)] -> Right (AE.Bool val)
-          [("L", _)] -> (AE.Array .V.fromList) <$> mapM (dDecodeEither . Just) (attr ^. D.avL)
-          [("M", _)] -> AE.Object <$> mapM (dDecodeEither . Just) (attr ^. D.avM)
+          [("L", _)] -> (AE.Array .V.fromList) <$> mapM (dDecodeEither . Just) (fromMaybe mempty (attr ^. D.attributeValue_l))
+          [("M", _)] -> AE.Object <$> mapM (dDecodeEither . Just) (fromMaybe mempty (attr ^. D.attributeValue_m))
           [("N", AE.String num)] -> first T.pack (AE.eitherDecodeStrict (encodeUtf8 num))
           [("N", num@(AE.Number _))] -> Right num -- Just in case, this is usually not returned
           [("S", AE.String val)] -> Right (AE.String val)
           [("NULL", _)] -> Right AE.Null
-          _ -> Left ("Undecodable json value: " <> decodeUtf8 (toStrict (AE.encode obj)))
+          _ -> Left ("Undecodable json value: " Data.Monoid.<> decodeUtf8 (toStrict (AE.encode obj)))
       _ -> Left "Wrong dynamo data" -- This shouldn't happen
   --
   dIsMissing AE.Null = True

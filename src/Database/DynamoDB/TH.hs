@@ -30,8 +30,10 @@ module Database.DynamoDB.TH (
 
 import           Control.Lens                    (ix, over, (.~), (^.), _1, view, (^..))
 import           Control.Monad                   (forM_, unless, when)
+import           Control.Monad.Catch             (MonadCatch)
 import           Control.Monad.Trans.Class       (lift)
 import           Control.Monad.Trans.Writer.Lazy (WriterT, execWriterT, tell)
+import           Control.Monad.Trans.Resource    (MonadResource)
 import           Data.Bool                       (bool)
 import           Data.Char                       (toUpper)
 import           Data.Function                   ((&))
@@ -42,8 +44,8 @@ import           Generics.SOP
 import           Generics.SOP.TH                 (deriveGenericOnly)
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax      (Name (..), OccName (..))
-import           Network.AWS.DynamoDB.Types      (attributeValue, avM, ProvisionedThroughput, StreamViewType)
-import           Network.AWS                     (MonadAWS)
+import           Network.AWS                     (Env)
+import           Network.AWS.DynamoDB.Types      (newAttributeValue, attributeValue_m, ProvisionedThroughput, StreamViewType)
 
 import           Database.DynamoDB.Class
 import           Database.DynamoDB.Migration     (runMigration)
@@ -139,7 +141,7 @@ mkTableDefs migname TableConfig{..} =
     forM_ localIndexes $ \(idx, _) -> do
         idxHashName <- (fst . head) <$> getFieldNames idx translateField
         when (idxHashName /= tblHashName) $
-            fail ("Hash key " <> show idxHashName <> " in local index " <> show idx
+            fail ("Hash key " Data.Monoid.<> show idxHashName <> " in local index " <> show idx
                   <> " is not equal to table hash key " <> show tblHashName)
 
     -- Instances for indices
@@ -272,8 +274,8 @@ deriveCollection table translate =
 -- Creates:
 --
 -- > instance DynamoEncodable Type where
--- >   dEncode val = Just (attributeValue & avM .~ gdEncodeG [fieldnames] val)
--- >   dDecode (Just attr) = gdDecodeG [fieldnames] (attr ^. avM)
+-- >   dEncode val = Just (newAttributeValue & attributeValue_m .~ gdEncodeG [fieldnames] val)
+-- >   dDecode (Just attr) = gdDecodeG [fieldnames] (attr ^. attributeValue_m)
 -- >   dDecode Nothing = Nothing
 -- > instance InCollection column_type P_Column1 'NestedPath
 -- > instance InCollection column_type P_Column2 'NestedPath
@@ -287,9 +289,9 @@ deriveEncodable' table translate = do
     let fieldList = listE (map (appE (varE 'T.pack) . litE . StringL . fst) tblFieldNames)
     lift [d|
       instance DynamoEncodable $(conT table) where
-          dEncode val = Just (attributeValue & avM .~ gsEncodeG $(fieldList) val)
+          dEncode val = Just (newAttributeValue & attributeValue_m .~ Just (gsEncodeG $(fieldList) val))
           dDecode = either (const Nothing) Just . dDecodeEither
-          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (attr ^. avM)
+          dDecodeEither (Just attr) = gsDecodeG $(fieldList) (fromMaybe mempty (attr ^. attributeValue_m))
           dDecodeEither Nothing = Left "Missing value"
       |] >>= tell
     let constrs = mkConstrNames tblFieldNames
@@ -305,15 +307,19 @@ mkMigrationFunc name table globindexes locindexes = do
         locMap = ListE (map locIdxTemplate locindexes)
     let funcname = mkName name
     m <- newName "m"
-    let signature = SigD funcname (ForallT [PlainTV m] [AppT (ConT ''MonadAWS) (VarT m)]
-                                  (AppT (AppT ArrowT (AppT (AppT (ConT ''HashMap) (ConT ''T.Text))
-                                  (ConT ''ProvisionedThroughput)))
-                                  (AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType)))
-                                  (AppT (VarT m) (TupleT 0)))))
-    return [signature, ValD (VarP funcname) (NormalB (AppE (AppE (AppE (VarE 'runMigration)
-              (SigE (ConE 'Proxy)
-              (AppT (ConT ''Proxy)
-              (ConT table)))) glMap) locMap)) []]
+    let envArg = ConT ''Env
+        provisionMapArg = AppT (AppT (ConT ''HashMap) (ConT ''T.Text)) (ConT ''ProvisionedThroughput)
+        streamArg = AppT (AppT ArrowT (AppT (ConT ''Maybe) (ConT ''StreamViewType))) (AppT (VarT m) (TupleT 0))
+        mkConstraint n = AppT (ConT n) (VarT m)
+        signature = SigD funcname (ForallT [PlainTV m] [mkConstraint ''MonadResource, mkConstraint ''MonadCatch]
+                                      (AppT (AppT ArrowT envArg) (AppT (AppT ArrowT provisionMapArg) streamArg)))
+
+    envVarName <- newName "env"
+    let tableProxy = (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT table)))
+    let body = NormalB
+         (AppE (AppE (AppE (AppE (VarE 'runMigration) (VarE envVarName)) tableProxy) glMap) locMap)
+
+    return [signature, FunD funcname [Clause [VarP envVarName] body []]]
   where
     glIdxTemplate idx = AppE (VarE 'createGlobalIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))
     locIdxTemplate idx = AppE (VarE 'createLocalIndex) (SigE (ConE 'Proxy) (AppT (ConT ''Proxy) (ConT idx)))

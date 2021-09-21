@@ -77,7 +77,7 @@ dcomp :: (InCollection col tbl 'FullPath, DynamoEncodable typ)
 dcomp op col val = Comparison (nameGen col) op encval
   where
     -- Ord comparing against nothing doesn't make much sense - failback to NULL
-    encval = fromMaybe (D.attributeValue & D.avNULL .~ Just True) (dEncode val)
+    encval = fromMaybe (D.newAttributeValue & D.attributeValue_null .~ Just True) (dEncode val)
 
 -- | AND for combining conditions.
 (&&.) :: FilterCondition t -> FilterCondition t -> FilterCondition t

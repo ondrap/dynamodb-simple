@@ -13,6 +13,7 @@ import           Control.Exception.Safe   (SomeException, catchAny, finally,
                                            try)
 import           Control.Lens             ((.~))
 import           Control.Monad.IO.Class   (liftIO)
+import           Control.Monad.Trans.Resource (ResourceT(..))
 import           Data.Conduit             (runConduit, (=$=))
 import qualified Data.Conduit.List        as CL
 import           Data.Either              (isLeft)
@@ -22,7 +23,7 @@ import           Data.Proxy
 import           Data.Semigroup           ((<>))
 import qualified Data.Text                as T
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB)
+import qualified Network.AWS.DynamoDB
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
@@ -56,7 +57,7 @@ data TestSecond = TestSecond {
 } deriving (Show, Eq)
 mkTableDefs "migrateTest2" (tableConfig "" (''TestSecond, NoRange) [] [])
 
-withDb :: Example (IO b) => String -> AWS b -> SpecWith (Arg (IO b))
+withDb :: Example (IO b) => String -> (Env -> ResourceT IO b) -> SpecWith (Arg (IO b))
 withDb msg code = it msg runcode
   where
     runcode = do
@@ -64,180 +65,180 @@ withDb msg code = it msg runcode
       setEnv "AWS_SECRET_ACCESS_KEY" "XXXXXXXXXXXXXXfdjdsfjdsfjdskldfs+kl"
       lgr  <- newLogger Debug stdout
       env  <- newEnv Discover
-      let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+      let dynamo = setEndpoint False "localhost" 8000 Network.AWS.DynamoDB.defaultService
       let newenv = env & configure dynamo
                        -- & set envLogger lgr
-      runResourceT $ runAWS newenv $ do
-          deleteTable (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
-          migrateTest mempty Nothing
-          migrateTest2 mempty Nothing
-          code `finally` deleteTable (Proxy :: Proxy Test)
+      runResourceT $ do
+          deleteTable newenv (Proxy :: Proxy Test) `catchAny` (\_ -> return ())
+          migrateTest newenv mempty Nothing
+          migrateTest2 newenv mempty Nothing
+          code newenv `finally` deleteTable newenv (Proxy :: Proxy Test)
 
 spec :: Spec
 spec = do
   describe "Basic operations" $ do
-    withDb "putItem/getItem works" $ do
+    withDb "putItem/getItem works" $ \env -> do
         let testitem1 = Test "1" 2 "text" False 3.14 2 Nothing
             testitem2 = Test "2" 3 "text" False 4.15 3 (Just "text")
-        putItem testitem1
-        putItem testitem2
-        it1 <- getItem Strongly tTest ("1", 2)
-        it2 <- getItem Strongly tTest ("2", 3)
+        putItem env testitem1
+        putItem env testitem2
+        it1 <- getItem env Strongly tTest ("1", 2)
+        it2 <- getItem env Strongly tTest ("2", 3)
         liftIO $ Just testitem1 `shouldBe` it1
         liftIO $ Just testitem2 `shouldBe` it2
-    withDb "getItemBatch/putItemBatch work" $ do
+    withDb "getItemBatch/putItemBatch work" $ \env -> do
         let template i = Test (T.pack $ show i) i "text" False 3.14 i Nothing
             newItems = map template [1..300]
-        putItemBatch newItems
+        putItemBatch env newItems
         --
         let keys = map tableKey newItems
-        items <- getItemBatch Strongly keys
+        items <- getItemBatch env Strongly keys
         liftIO $ sort items `shouldBe` sort newItems
-    withDb "insertItem doesn't overwrite items" $ do
+    withDb "insertItem doesn't overwrite items" $ \env -> do
         let testitem1 = Test "1" 2 "text" False 3.14 2 Nothing
             testitem1_ = Test "1" 2 "XXXX" True 3.14 3 Nothing
-        insertItem testitem1
-        (res :: Either SomeException ()) <- try (insertItem testitem1_)
+        insertItem env testitem1
+        (res :: Either SomeException ()) <- try (insertItem env testitem1_)
         liftIO $ res `shouldSatisfy` isLeft
-    withDb "scanSource works correctly with sLimit" $ do
+    withDb "scanSource works correctly with sLimit" $ \env -> do
         let template i = Test (T.pack $ show i) i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
+        putItemBatch env newItems
         let squery = scanOpts & sFilterCondition .~ Just (iInt' >. 50)
                               & sLimit .~ Just 1
-        res <- runConduit $ scanSource tTest squery =$= CL.consume
+        res <- runConduit $ scanSource env tTest squery =$= CL.consume
         liftIO $ sort res `shouldBe` sort (drop 50 newItems)
-    withDb "querySource works correctly with qLimit" $ do
+    withDb "querySource works correctly with qLimit" $ \env -> do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
+        putItemBatch env newItems
         let squery = queryOpts "hashkey" & qFilterCondition .~ Just (iInt' >. 50)
                                          & qLimit .~ Just 1
-        res <- runConduit $ querySource tTest squery =$= CL.consume
+        res <- runConduit $ querySource env tTest squery =$= CL.consume
         liftIO $ res `shouldBe` drop 50 newItems
-    withDb "queryCond works correctly with qLimit" $ do
+    withDb "queryCond works correctly with qLimit" $ \env -> do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
-        items <- queryCond tTest "hashkey" Nothing (iInt' >. 50) Forward 5
+        putItemBatch env newItems
+        items <- queryCond env tTest "hashkey" Nothing (iInt' >. 50) Forward 5
         liftIO $ items `shouldBe` drop 50 newItems
-    withDb "scanCond works correctly" $ do
+    withDb "scanCond works correctly" $ \env -> do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
-        items <- scanCond tTest (iInt' >. 50) 5
+        putItemBatch env newItems
+        items <- scanCond env tTest (iInt' >. 50) 5
         liftIO $ items `shouldBe` drop 50 newItems
-    withDb "scan works correctly with qlimit" $ do
+    withDb "scan works correctly with qlimit" $ \env -> do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
-      putItemBatch newItems
-      (items, _) <- scan tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' >. 50)) 5
+      putItemBatch env newItems
+      (items, _) <- scan env tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' >. 50)) 5
       liftIO $ items `shouldBe` drop 50 newItems
-    withDb "scan works correctly with `valIn`" $ do
+    withDb "scan works correctly with `valIn`" $ \env -> do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
-      putItemBatch newItems
-      (items, _) <- scan tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' `valIn` [20..30])) 50
+      putItemBatch env newItems
+      (items, _) <- scan env tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' `valIn` [20..30])) 50
       liftIO $ map iInt items `shouldBe` [20..30]
-    withDb "scan works correctly with BETWEEN" $ do
+    withDb "scan works correctly with BETWEEN" $ \env -> do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
-      putItemBatch newItems
-      (items, _) <- scan tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' `between` (20, 30))) 50
+      putItemBatch env newItems
+      (items, _) <- scan env tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (iInt' `between` (20, 30))) 50
       liftIO $ map iInt items `shouldBe` [20..30]
-    withDb "scan works correctly with SIZE" $ do
+    withDb "scan works correctly with SIZE" $ \env -> do
       let testitem1 = Test "1" 2 "very very very very very long" False 3.14 2 Nothing
           testitem2 = Test "1" 3 "short" False 3.14 2 Nothing
-      putItem testitem1
-      putItem testitem2
-      (items, _) <- scan tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (size iText' >. 10)) 50
+      putItem env testitem1
+      putItem env testitem2
+      (items, _) <- scan env tTest (scanOpts & sLimit .~ Just 1 & sFilterCondition .~ Just (size iText' >. 10)) 50
       liftIO $ items `shouldBe` [testitem1]
-    withDb "querySimple works correctly with RangeOper" $ do
+    withDb "querySimple works correctly with RangeOper" $ \env -> do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
-        items <- querySimple tTest "hashkey" (Just $ RangeLessThan 30) Backward 5
+        putItemBatch env newItems
+        items <- querySimple env tTest "hashkey" (Just $ RangeLessThan 30) Backward 5
         liftIO $ map iRangeKey items `shouldBe` [29,28..25]
-    withDb "queryCond works correctly with -1 limit" $ do
+    withDb "queryCond works correctly with -1 limit" $ \env -> do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
-        (items :: [Test]) <- queryCond tTest "hashkey" Nothing (iInt' >. 50) Backward (-1)
+        putItemBatch env newItems
+        (items :: [Test]) <- queryCond env tTest "hashkey" Nothing (iInt' >. 50) Backward (-1)
         liftIO $ items `shouldBe` []
-    withDb "querySourceByKey works/compiles correctly" $ do
+    withDb "querySourceByKey works/compiles correctly" $ \env -> do
       let template i = Test "hashkey" i "text" False 3.14 i Nothing
           newItems = map template [1..55]
-      putItemBatch newItems
-      res <- runConduit $ querySourceByKey iTestKeyOnly "text" =$= CL.consume
+      putItemBatch env newItems
+      res <- runConduit $ querySourceByKey env iTestKeyOnly "text" =$= CL.consume
       liftIO $ length res `shouldBe` 55
 
-    withDb "updateItemByKey works" $ do
+    withDb "updateItemByKey works" $ \env -> do
         let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
-        putItem testitem1
-        new1 <- updateItemByKey tTest (tableKey testitem1)
-                                ((iInt' +=. 5) <> (iText' =. "updated") <> (iMText' =. Nothing))
-        new2 <- fromJust <$> getItem Strongly tTest (tableKey testitem1)
+        putItem env testitem1
+        new1 <- updateItemByKey env tTest (tableKey testitem1)
+                                    ((iInt' +=. 5) <> (iText' =. "updated") <> (iMText' =. Nothing))
+        new2 <- fromJust <$> getItem env Strongly tTest (tableKey testitem1)
         liftIO $ do
             new1 `shouldBe` new2
             iInt new1 `shouldBe` 7
             iText new1 `shouldBe` "updated"
             iMText new1 `shouldBe` Nothing
 
-    withDb "update fails on non-existing item" $ do
+    withDb "update fails on non-existing item" $ \env -> do
         let testitem1 = Test "1" 2 "text" False 3.14 2 (Just "something")
-        putItem testitem1
-        updateItemByKey_ tTest ("1", 2) (iBool' =. True)
-        (res :: Either SomeException ()) <- try $ updateItemByKey_ tTest ("2", 3) (iBool' =. True)
+        putItem env testitem1
+        updateItemByKey_ env tTest ("1", 2) (iBool' =. True)
+        (res :: Either SomeException ()) <- try $ updateItemByKey_ env tTest ("2", 3) (iBool' =. True)
         liftIO $ res `shouldSatisfy` isLeft
 
-    withDb "scan continuation works" $ do
+    withDb "scan continuation works" $ \env -> do
         let template i = Test "hashkey" i "text" False 3.14 i Nothing
             newItems = map template [1..55]
-        putItemBatch newItems
+        putItemBatch env newItems
 
-        (it1, next) <- scan tTest (scanOpts & sFilterCondition .~ Just (iInt' >. 20)
+        (it1, next) <- scan env tTest (scanOpts & sFilterCondition .~ Just (iInt' >. 20)
                                             & sLimit .~ Just 2) 5
-        (it2, _) <- scan tTest (scanOpts & sFilterCondition .~ Just (iInt' >. 20)
+        (it2, _) <- scan env tTest (scanOpts & sFilterCondition .~ Just (iInt' >. 20)
                                          & sLimit .~ Just 1
                                          & sStartKey .~ next) 5
         liftIO $ map iInt (it1 ++ it2) `shouldBe` [21..30]
 
-    withDb "searching empty strings" $ do
+    withDb "searching empty strings" $ \env -> do
         let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
         let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
-        putItem testitem1
-        putItem testitem2
-        items1 <- queryCond tTest "1" Nothing (iText' ==. "") Forward 10
-        items2 <- queryCond tTest "1" Nothing (iMText' ==. Nothing) Forward 10
+        putItem env testitem1
+        putItem env testitem2
+        items1 <- queryCond env tTest "1" Nothing (iText' ==. "") Forward 10
+        items2 <- queryCond env tTest "1" Nothing (iMText' ==. Nothing) Forward 10
         liftIO $ items1 `shouldBe` [testitem1]
         liftIO $ items2 `shouldBe` [testitem1]
 
-    withDb "deleting by key" $ do
+    withDb "deleting by key" $ \env -> do
         let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
         let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "test")
-        putItem testitem1
-        putItem testitem2
-        (items, _) <- scan tTest scanOpts 10
-        deleteItemByKey tTest (tableKey testitem1)
-        deleteItemByKey tTest (tableKey testitem2)
-        (items2, _) <- scan tTest scanOpts 10
+        putItem env testitem1
+        putItem env testitem2
+        (items, _) <- scan env tTest scanOpts 10
+        deleteItemByKey env tTest (tableKey testitem1)
+        deleteItemByKey env tTest (tableKey testitem2)
+        (items2, _) <- scan env tTest scanOpts 10
         liftIO $ do
           length items `shouldBe` 2
           length items2 `shouldBe` 0
 
-    withDb "test left join" $ do
+    withDb "test left join" $ \env -> do
         let testitem1 = Test "1" 2 "" False 3.14 2 Nothing
         let testitem2 = Test "1" 3 "aaa" False 3.14 2 (Just "aaa")
         let testsecond = TestSecond "aaa" 3
-        putItem testitem1
-        putItem testitem2
-        putItem testsecond
-        res <- runConduit $ querySourceChunks tTest (queryOpts "1")
-                              =$= leftJoin Strongly tTestSecond (Just . iText)
+        putItem env testitem1
+        putItem env testitem2
+        putItem env testsecond
+        res <- runConduit $ querySourceChunks env tTest (queryOpts "1")
+                              =$= leftJoin env Strongly tTestSecond (Just . iText)
                               =$= CL.concat =$= CL.consume
         liftIO $ res `shouldBe` [(testitem1, Nothing), (testitem2, Just testsecond)]
-        res2 <- runConduit $ querySourceChunks tTest (queryOpts "1")
-                              =$= leftJoin Strongly tTestSecond iMText
+        res2 <- runConduit $ querySourceChunks env tTest (queryOpts "1")
+                              =$= leftJoin env Strongly tTestSecond iMText
                               =$= CL.concat =$= CL.consume
         liftIO $ res2 `shouldBe` [(testitem1, Nothing), (testitem2, Just testsecond)]
 

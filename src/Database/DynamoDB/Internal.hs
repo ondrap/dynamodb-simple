@@ -63,7 +63,7 @@ nameGen :: Column typ ctyp col -> NameGen
 nameGen (Column lst) mkident = nameGenPath lst mkident
 nameGen (Size lst) mkident = do
     (path, attrs) <- nameGenPath lst mkident
-    return ("size(" <> path <> ")", attrs)
+    return ("size(" Data.Semigroup.<> path <> ")", attrs)
 
 nameGenPath :: NonEmpty IntraColName -> Supply T.Text T.Text -> Supply T.Text (T.Text, HashMap T.Text T.Text)
 nameGenPath lst mkident = foldlM joinParts ("", HMap.empty) lst
