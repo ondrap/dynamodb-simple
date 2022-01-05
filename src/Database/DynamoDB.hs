@@ -65,6 +65,7 @@ module Database.DynamoDB (
   , innerJoin
     -- * Data entry
   , putItem
+  , putItem'
   , putItemBatch
   , insertItem
     -- * Data modification
@@ -120,7 +121,11 @@ dGetItem p pkey = D.getItem (tableName p) & D.giKey .~ dKeyToAttr p pkey
 
 -- | Write item into the database; overwrite any previously existing item with the same primary key.
 putItem :: (MonadAWS m, DynamoTable a r) => a -> m ()
-putItem item = void $ send (dPutItem item)
+putItem = void . putItem'
+
+-- | Write item into the database and receive the response; overwrite any previously existing item with the same primary key.
+putItem' :: (MonadAWS m, DynamoTable a r) => a -> m D.PutItemResponse
+putItem' item = send (dPutItem item)
 
 -- | Write item into the database only if it doesn't already exist.
 insertItem  :: forall a r m. (MonadAWS m, DynamoTable a r) => a -> m ()
