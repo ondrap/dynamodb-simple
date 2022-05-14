@@ -11,7 +11,7 @@ module BaseSpec where
 
 import           Control.Exception.Safe   (SomeException, catchAny, finally,
                                            try)
-import           Control.Lens             ((.~))
+import           Control.Lens             ((.~), (^.))
 import           Control.Monad.IO.Class   (liftIO)
 import           Data.Conduit             (runConduit, (=$=))
 import qualified Data.Conduit.List        as CL
@@ -22,7 +22,8 @@ import           Data.Proxy
 import           Data.Semigroup           ((<>))
 import qualified Data.Text                as T
 import           Network.AWS
-import           Network.AWS.DynamoDB     (dynamoDB)
+import           Network.AWS.DynamoDB     (dynamoDB,
+                                           pirsResponseStatus)
 import           System.Environment       (setEnv)
 import           System.IO                (stdout)
 import           Test.Hspec
@@ -79,12 +80,17 @@ spec = do
     withDb "putItem/getItem works" $ do
         let testitem1 = Test "1" 2 "text" False 3.14 2 Nothing
             testitem2 = Test "2" 3 "text" False 4.15 3 (Just "text")
+            testitem3 = Test "3" 4 "text" False 5.16 4 (Just "text")
         putItem testitem1
         putItem testitem2
+        res <- putItem' testitem3
+        liftIO $ res ^. pirsResponseStatus `shouldBe` 200
         it1 <- getItem Strongly tTest ("1", 2)
         it2 <- getItem Strongly tTest ("2", 3)
+        it3 <- getItem Strongly tTest ("3", 4)
         liftIO $ Just testitem1 `shouldBe` it1
         liftIO $ Just testitem2 `shouldBe` it2
+        liftIO $ Just testitem3 `shouldBe` it3
     withDb "getItemBatch/putItemBatch work" $ do
         let template i = Test (T.pack $ show i) i "text" False 3.14 i Nothing
             newItems = map template [1..300]
